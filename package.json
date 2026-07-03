@@ -1,0 +1,10 @@
+{
+  "name": "wechat-oa-auto-publisher",
+  "version": "1.0.0",
+  "description": "WeChat Official Account auto-publishing service. Zero-dependency Node.js server — runs 24/7 on CloudStudio, publishes pre-generated content to drafts on schedule.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {}
+}
