@@ -250,7 +250,7 @@ def generate_covers():
             "shapes": "circles",
         },
         "drama": {
-            "colors": [(250, 249, 247), [(254, 243, 199), (250, 249, 247)]],
+            "colors": [(250, 249, 247), (254, 243, 199)],
             "accent": (124, 58, 237),
             "accent2": (245, 158, 11),
             "shapes": "waves",
@@ -263,10 +263,11 @@ def generate_covers():
         w, h = 900, 383
         img = Image.new("RGB", (w, h), cfg["colors"][0])
 
-        # 渐变背景
+        # 渐变背景（c1=顶部颜色, c2=底部颜色）
+        c1 = cfg["colors"][0]
+        c2 = cfg["colors"][1]
         for y in range(h):
             ratio = y / h
-            c1, c2 = cfg["colors"][0], cfg["colors"][-1] if isinstance(cfg["colors"][-1], tuple) else cfg["colors"][1]
             r = int(c1[0] + (c2[0] - c1[0]) * ratio)
             g = int(c1[1] + (c2[1] - c1[1]) * ratio)
             b = int(c1[2] + (c2[2] - c1[2]) * ratio)
