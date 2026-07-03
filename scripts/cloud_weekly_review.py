@@ -5,9 +5,9 @@
 触发：每周一 UTC 2:00 (北京时间 10:00)
 
 环境变量：
-  DEEPSEEK_API_KEY — DeepSeek API 密钥（国内免费）
-  WEIXIN_APPID      — 广大大公众号 AppID
-  WEIXIN_SECRET     — 广大大公众号 AppSecret
+  SILICONFLOW_API_KEY — 硅基流动 API 密钥（国内永久免费）
+  WEIXIN_APPID         — 广大大公众号 AppID
+  WEIXIN_SECRET        — 广大大公众号 AppSecret
 """
 
 import os
@@ -137,9 +137,9 @@ def analyze_data(results):
         report.append(f"\n## 表现最佳: {best.get('title', '?')[:40]}（{best.get('int_page_read_user', 0)} 阅读）")
         report.append(f"\n## 表现最弱: {worst.get('title', '?')[:40]}（{worst.get('int_page_read_user', 0)} 阅读）")
 
-    # AI 分析（DeepSeek）
+    # AI 分析（硅基流动）
     report.append("\n## AI 复盘建议\n")
-    api_key = os.environ.get("DEEPSEEK_API_KEY")
+    api_key = os.environ.get("SILICONFLOW_API_KEY")
     if api_key:
         try:
             ai_text = generate_ai_analysis(articles, track_stats, total_read)
@@ -175,11 +175,11 @@ def basic_suggestions(track_stats, sorted_arts):
 def generate_ai_analysis(articles, track_stats, total_read):
     from openai import OpenAI
 
-    key = os.environ.get("DEEPSEEK_API_KEY")
+    key = os.environ.get("SILICONFLOW_API_KEY")
     if not key:
-        raise RuntimeError("DEEPSEEK_API_KEY 未设置")
+        raise RuntimeError("SILICONFLOW_API_KEY 未设置")
 
-    client = OpenAI(api_key=key, base_url="https://api.deepseek.com")
+    client = OpenAI(api_key=key, base_url="https://api.siliconflow.cn/v1")
 
     art_summary = [{"title": a.get("title", "")[:40], "read": a.get("int_page_read_user", 0),
                     "share": a.get("share_user", 0), "fav": a.get("add_to_fav_user", 0),
@@ -205,7 +205,7 @@ def generate_ai_analysis(articles, track_stats, total_read):
 口语化直接说，200-400字~"""
 
     resp = client.chat.completions.create(
-        model="deepseek-chat",
+        model="Qwen/Qwen2.5-7B-Instruct",
         messages=[{"role": "user", "content": prompt}],
         temperature=0.8,
         max_tokens=1000,

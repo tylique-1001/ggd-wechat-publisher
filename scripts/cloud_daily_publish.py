@@ -5,9 +5,9 @@
 触发：GitHub Actions cron 工作日 UTC 1:00 (北京时间 9:00)
 
 环境变量（GitHub Secrets）：
-  DEEPSEEK_API_KEY — DeepSeek API 密钥（国内免费额度）
-  WEIXIN_APPID      — 广大大公众号 AppID
-  WEIXIN_SECRET     — 广大大公众号 AppSecret
+  SILICONFLOW_API_KEY — 硅基流动 API 密钥（国内永久免费）
+  WEIXIN_APPID         — 广大大公众号 AppID
+  WEIXIN_SECRET        — 广大大公众号 AppSecret
 
 封面图：PIL 本地生成（零外部依赖）
 
@@ -40,9 +40,9 @@ WEIXIN_APPID = os.environ.get("WEIXIN_APPID", "wx94eb6ba27c82a203")
 WEIXIN_SECRET = os.environ.get("WEIXIN_SECRET", "")
 AUTHOR = "zylon"
 
-# DeepSeek（国内，免费额度，兼容 OpenAI SDK）
-DEEPSEEK_BASE = "https://api.deepseek.com"
-DEEPSEEK_MODEL = "deepseek-chat"
+# 硅基流动（国内，永久免费，兼容 OpenAI SDK）
+SILICONFLOW_BASE = "https://api.siliconflow.cn/v1"
+SILICONFLOW_MODEL = "Qwen/Qwen2.5-7B-Instruct"  # 永久免费，中文能力强
 
 # 赛道
 TRACKS = {
@@ -138,14 +138,14 @@ def wechat_create_draft(token, title, digest, html, thumb_id=None):
 
 
 # ============================================================
-# DeepSeek 文本生成（国内，免费额度）
+# 硅基流动 文本生成（国内，永久免费）
 # ============================================================
-def get_deepseek_client():
+def get_siliconflow_client():
     from openai import OpenAI
-    key = os.environ.get("DEEPSEEK_API_KEY")
+    key = os.environ.get("SILICONFLOW_API_KEY")
     if not key:
-        raise RuntimeError("DEEPSEEK_API_KEY 未设置")
-    return OpenAI(api_key=key, base_url=DEEPSEEK_BASE)
+        raise RuntimeError("SILICONFLOW_API_KEY 未设置")
+    return OpenAI(api_key=key, base_url=SILICONFLOW_BASE)
 
 
 SYSTEM_PROMPT = f"""你是广大大(SocialPeta)公众号写手~广大大是出海广告买量素材分析工具~
@@ -195,9 +195,9 @@ def generate_article(track_key):
 
     log.info(f"🤖 生成 {track['name']}...")
 
-    client = get_deepseek_client()
+    client = get_siliconflow_client()
     resp = client.chat.completions.create(
-        model=DEEPSEEK_MODEL,
+        model=SILICONFLOW_MODEL,
         messages=[
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": prompt},
@@ -213,7 +213,7 @@ def generate_article(track_key):
     if not clean:
         log.error(f"❌ 发现竞品: {banned}，重新生成...")
         resp2 = client.chat.completions.create(
-            model=DEEPSEEK_MODEL,
+            model=SILICONFLOW_MODEL,
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": prompt},
@@ -423,7 +423,7 @@ def main():
     os.makedirs(output_dir, exist_ok=True)
 
     log.info(f"🚀 广大大云端发布 | {date_str}")
-    log.info(f"🤖 DeepSeek(国内免费) | 🎨 PIL本地封面")
+    log.info(f"🤖 硅基流动(国内永久免费) | 🎨 PIL本地封面")
 
     cover_datas = generate_covers()
 
