@@ -6,7 +6,7 @@
   GitHub Actions cron: 每周一 UTC 2:00 (= 北京时间 10:00)
 
 环境变量：
-  OPENAI_API_KEY  — OpenAI API 密钥（用于生成复盘报告）
+  GEMINI_API_KEY  — Google Gemini API 密钥（免费额度，用于生成复盘报告）
   WEIXIN_APPID    — 广大大公众号 AppID
   WEIXIN_SECRET   — 广大大公众号 AppSecret
 
@@ -30,6 +30,8 @@ log = logging.getLogger(__name__)
 
 WEIXIN_APPID = os.environ.get("WEIXIN_APPID", "wx94eb6ba27c82a203")
 WEIXIN_SECRET = os.environ.get("WEIXIN_SECRET", "")
+
+GEMINI_MODEL = "gemini-2.0-flash"
 
 # 三大赛道关键词（用于自动分类文章）
 TRACK_KEYWORDS = {
@@ -71,7 +73,6 @@ def api_post(token, endpoint, payload):
 def get_date_range():
     """获取上周日期范围 (周一-周日)"""
     today = datetime.now()
-    # 上周日 = 今天 - 今天是周几
     days_since_sunday = today.weekday() + 1  # Monday=0 -> 1
     last_sunday = today - timedelta(days=days_since_sunday)
     last_monday = last_sunday - timedelta(days=6)
@@ -185,7 +186,6 @@ def analyze_data(results):
 
     track_stats = {"游戏": {"read": 0, "count": 0}, "工具": {"read": 0, "count": 0}, "短剧": {"read": 0, "count": 0}, "其他": {"read": 0, "count": 0}}
 
-    # 按阅读量排序
     sorted_articles = sorted(articles, key=lambda x: x.get("int_page_read_user", 0), reverse=True)
 
     for art in sorted_articles:
@@ -230,8 +230,8 @@ def analyze_data(results):
             report_lines.append(f"  - 赛道: {classify_track(worst.get('title', ''))}")
             report_lines.append("")
 
-    # === 5. AI 驱动的复盘建议（如果有 OPENAI_API_KEY）===
-    api_key = os.environ.get("OPENAI_API_KEY")
+    # === 5. AI 驱动的复盘建议（使用 Gemini 免费额度）===
+    api_key = os.environ.get("GEMINI_API_KEY")
     if api_key:
         try:
             ai_report = generate_ai_analysis(articles, track_stats, total_read)
@@ -261,7 +261,6 @@ def generate_basic_suggestions(track_stats, sorted_articles):
     """生成基础建议（不依赖 AI）"""
     suggestions = []
 
-    # 赛道表现分析
     best_track = max(track_stats.items(), key=lambda x: x[1]["read"] / max(x[1]["count"], 1))
     worst_track = min(track_stats.items(), key=lambda x: x[1]["read"] / max(x[1]["count"], 1))
 
@@ -291,9 +290,14 @@ def generate_basic_suggestions(track_stats, sorted_articles):
 
 
 def generate_ai_analysis(articles, track_stats, total_read):
-    """使用 OpenAI 生成深度分析"""
-    from openai import OpenAI
-    client = OpenAI()
+    """使用 Gemini 生成深度分析"""
+    import google.generativeai as genai
+
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        raise RuntimeError("GEMINI_API_KEY 未设置")
+
+    genai.configure(api_key=api_key)
 
     # 准备数据摘要
     article_summary = []
@@ -329,13 +333,12 @@ def generate_ai_analysis(articles, track_stats, total_read):
 
 请用口语化、直接的分析风格，不要套话。字数200-400字。"""
 
-    response = client.chat.completions.create(
-        model="gpt-4o",
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0.8,
-        max_tokens=1000,
+    model = genai.GenerativeModel(model_name=GEMINI_MODEL)
+    response = model.generate_content(
+        prompt,
+        generation_config={"temperature": 0.8, "max_output_tokens": 1000},
     )
-    return response.choices[0].message.content
+    return response.text
 
 
 def save_report(report_text, output_dir="/tmp/gzh_output"):
