@@ -1,0 +1,29 @@
+# 公众号草稿输出文件（含敏感数据）
+outputs/*.html
+outputs/*.md
+outputs/*.png
+outputs/*.json
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.env
+venv/
+env/
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# WorkBuddy 内部文件
+.workbuddy/
+
+# 脚本敏感信息（凭证硬编码的脚本不上传到 GitHub）
+scripts/auto_publish.py
+scripts/push_ggd.py
+.wechat_config.json

@@ -1,0 +1,40 @@
+name: 每周复盘
+
+on:
+  schedule:
+    # 北京时间每周一 10:00 = UTC 2:00
+    - cron: '0 2 * * 1'
+  workflow_dispatch:  # 支持手动触发
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: 安装依赖
+        run: pip install openai pillow requests
+
+      - name: 运行数据复盘
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          WEIXIN_APPID: ${{ secrets.WEIXIN_APPID }}
+          WEIXIN_SECRET: ${{ secrets.WEIXIN_SECRET }}
+        run: |
+          python scripts/cloud_weekly_review.py
+
+      - name: 上传复盘报告
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: weekly-review-report
+          path: /tmp/gzh_output/weekly_review_*.md
+          retention-days: 7
