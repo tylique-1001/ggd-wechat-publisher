@@ -6,9 +6,12 @@
   GitHub Actions cron: 工作日 UTC 1:00 (= 北京时间 9:00)
 
 环境变量（通过 GitHub Secrets 注入）：
-  OPENAI_API_KEY  — OpenAI API 密钥（用于内容生成 + 封面图生成）
+  GEMINI_API_KEY  — Google Gemini API 密钥（免费额度，用于内容生成）
   WEIXIN_APPID    — 广大大公众号 AppID
   WEIXIN_SECRET   — 广大大公众号 AppSecret
+
+封面图生成：
+  使用 Pollinations.ai（完全免费，无需API Key）
 
 用法：
   python3 scripts/cloud_daily_publish.py [--date 2026-07-03]
@@ -27,6 +30,7 @@ import subprocess
 import tempfile
 import re
 import time
+import urllib.parse
 from datetime import datetime, timedelta
 from io import BytesIO
 from pathlib import Path
@@ -41,6 +45,9 @@ WEIXIN_APPID = os.environ.get("WEIXIN_APPID", "wx94eb6ba27c82a203")
 WEIXIN_SECRET = os.environ.get("WEIXIN_SECRET", "")
 WEIXIN_NAME = "广大大 SocialPeta"
 AUTHOR = "zylon"
+
+# Gemini 模型（免费额度）
+GEMINI_MODEL = "gemini-2.0-flash"
 
 # 三大赛道配置
 TRACKS = {
@@ -94,10 +101,10 @@ def check_no_competitor(text):
 
 
 # ============================================================
-# 微信 API（从 push_ggd.py 移植，适配云端环境）
+# 微信 API
 # ============================================================
 def wechat_get_token():
-    """获取 access_token（云端版，不验证 IP callback）"""
+    """获取 access_token"""
     url = f"https://api.weixin.qq.com/cgi-bin/token?grant_type=client_credential&appid={WEIXIN_APPID}&secret={WEIXIN_SECRET}"
     result = subprocess.run(
         ["curl", "-s", url],
@@ -174,16 +181,24 @@ def wechat_create_draft(token, title, digest, content_html, thumb_media_id=None)
 
 
 # ============================================================
-# AI 内容生成（OpenAI API）
+# AI 内容生成（Google Gemini API — 免费额度）
 # ============================================================
-def get_openai_client():
-    """获取 OpenAI 客户端"""
-    from openai import OpenAI
-    return OpenAI()
+def get_gemini_model():
+    """获取 Gemini 模型实例"""
+    import google.generativeai as genai
+
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        raise RuntimeError("GEMINI_API_KEY 环境变量未设置")
+
+    genai.configure(api_key=api_key)
+
+    # gemini-2.0-flash: 免费额度 1500请求/天，15 RPM
+    return genai.GenerativeModel(model_name=GEMINI_MODEL)
 
 
 def build_system_prompt():
-    """构建完整的系统提示词（包含所有写作规则）"""
+    """构建完整的系统提示词"""
     return f"""你是广大大(SocialPeta)公众号的文案写手。广大大是出海广告买量素材分析+竞品策略+市场大盘分析工具。
 
 ## 写作铁律（必须严格遵守）
@@ -213,7 +228,7 @@ def build_system_prompt():
 - 内容核心：用广大大数据"量化拆解"具体产品的买量策略
 
 ### 排版外观
-- 输出纯文本 Markdown 格式
+- 输出纯文本格式
 - 用自然分段，不要编号列表
 - 可以有小标题但不要用数字编号
 """
@@ -266,79 +281,80 @@ def build_track_prompt(track_key, date_str):
 
 
 def generate_article(track_key, date_str):
-    """使用 OpenAI 生成一篇文章"""
-    client = get_openai_client()
+    """使用 Gemini 生成一篇文章"""
+    import google.generativeai as genai
 
+    model = get_gemini_model()
     system_prompt = build_system_prompt()
     user_prompt = build_track_prompt(track_key, date_str)
 
     log.info(f"🤖 开始生成 {TRACKS[track_key]['name']} 赛道文章...")
 
-    response = client.chat.completions.create(
-        model="gpt-4o",
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
-        ],
-        temperature=0.85,
-        max_tokens=4000,
+    # Gemini 使用 system_instruction + generate_content
+    # 重新创建带 system_instruction 的 model
+    model_with_system = genai.GenerativeModel(
+        model_name=GEMINI_MODEL,
+        system_instruction=system_prompt,
     )
 
-    article_text = response.choices[0].message.content
+    response = model_with_system.generate_content(
+        user_prompt,
+        generation_config={
+            "temperature": 0.85,
+            "max_output_tokens": 4000,
+        }
+    )
+
+    article_text = response.text
 
     # 检查竞品名
     clean, banned = check_no_competitor(article_text)
     if not clean:
         log.error(f"❌ 文章中发现竞品名: {banned}，重新生成...")
-        response = client.chat.completions.create(
-            model="gpt-4o",
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-                {"role": "assistant", "content": article_text},
-                {"role": "user", "content": f"上面文章里出现了竞品名「{banned}」，这是绝对禁止的。请重新生成，移除所有竞品引用，替换为安全数据源。"},
-            ],
-            temperature=0.85,
-            max_tokens=4000,
+        chat = model_with_system.start_chat(history=[
+            {"role": "user", "parts": [user_prompt]},
+            {"role": "model", "parts": [article_text]},
+        ])
+        response = chat.send_message(
+            f"上面文章里出现了竞品名「{banned}」，这是绝对禁止的。请重新生成整篇文章，移除所有竞品引用，替换为安全数据源。",
+            generation_config={"temperature": 0.85, "max_output_tokens": 4000},
         )
-        article_text = response.choices[0].message.content
+        article_text = response.text
 
     log.info(f"✅ {TRACKS[track_key]['name']} 文章生成完成，{len(article_text)} 字符")
     return article_text
 
 
-def generate_cover(track_key, article_title):
-    """使用 DALL-E 生成封面图"""
-    client = get_openai_client()
-
+# ============================================================
+# 封面图生成（Pollinations.ai — 完全免费，无需API Key）
+# ============================================================
+def generate_cover(track_key):
+    """使用 Pollinations.ai 免费生成封面图"""
     cover_prompts = {
-        "game": f"A dramatic dark battlefield scene with floating holographic data panels, deep red and gold color scheme, abstract gaming elements, no text or watermarks, professional editorial style, 1792x1024",
-        "tool": f"A clean modern workspace with floating productivity icons and data visualizations, teal and gray color scheme, abstract app interface elements, no text or watermarks, minimalist editorial style, 1792x1024",
-        "drama": f"A cinematic film strip with neural network nodes glowing, purple and amber gradients, dramatic lighting, abstract storytelling elements, no text or watermarks, magazine editorial style, 1792x1024",
+        "game": "A dramatic dark battlefield scene with floating holographic data panels, deep red and gold color scheme, abstract gaming elements, no text no watermark, professional editorial style",
+        "tool": "A clean modern workspace with floating productivity icons and data visualizations, teal and gray color scheme, abstract app interface elements, no text no watermark, minimalist editorial style",
+        "drama": "A cinematic film strip with neural network nodes glowing, purple and amber gradients, dramatic lighting, abstract storytelling elements, no text no watermark, magazine editorial style",
     }
 
     prompt = cover_prompts.get(track_key, cover_prompts["game"])
+    encoded = urllib.parse.quote(prompt)
+    url = f"https://image.pollinations.ai/prompt/{encoded}?width=1792&height=1024&nologo=true&seed={int(time.time())}"
 
-    log.info(f"🎨 生成 {TRACKS[track_key]['name']} 封面图...")
-    response = client.images.generate(
-        model="dall-e-3",
-        prompt=prompt,
-        size="1792x1024",
-        quality="standard",
-        n=1,
-    )
+    log.info(f"🎨 生成 {TRACKS[track_key]['name']} 封面图（Pollinations.ai 免费）...")
 
-    image_url = response.data[0].url
-    log.info(f"✅ 封面图生成成功")
-
-    # 下载图片
     import requests as req
-    image_data = req.get(image_url).content
+    image_data = req.get(url, timeout=60).content
+
+    # 验证是否为有效图片
+    if len(image_data) < 1000:
+        raise RuntimeError(f"封面图生成失败，返回数据太小 ({len(image_data)} bytes)")
+
+    log.info(f"✅ 封面图生成成功 ({len(image_data)} bytes)")
     return image_data
 
 
 def crop_cover(image_data, output_path):
-    """中心裁剪为 900x383（2.35:1），仿照 crop_cover.py 逻辑"""
+    """中心裁剪为 900x383（2.35:1）"""
     from PIL import Image
 
     img = Image.open(BytesIO(image_data))
@@ -349,12 +365,10 @@ def crop_cover(image_data, output_path):
     current_ratio = w / h
 
     if current_ratio > target_ratio:
-        # 图片太宽，裁两边
         new_w = int(h * target_ratio)
         left = (w - new_w) // 2
         img = img.crop((left, 0, left + new_w, h))
     else:
-        # 图片太高，裁上下
         new_h = int(w / target_ratio)
         top = (h - new_h) // 2
         img = img.crop((0, top, w, top + new_h))
@@ -366,7 +380,6 @@ def crop_cover(image_data, output_path):
 
 def markdown_to_html(md_text, track_key):
     """将 Markdown 文本转换为公众号 HTML（带赛道专属样式）"""
-    # 基础 HTML 框架
     style_configs = {
         "game": {
             "bg": "#1a1a2e",
@@ -402,8 +415,6 @@ def markdown_to_html(md_text, track_key):
 
     style = style_configs.get(track_key, style_configs["tool"])
 
-    # 将 ~ 换回句号用于结构解析（文章用~但HTML不应影响渲染，保留~即可）
-    # 简单的 Markdown → HTML 转换
     lines = md_text.strip().split("\n")
     html_parts = []
 
@@ -425,14 +436,12 @@ def markdown_to_html(md_text, track_key):
         elif line.startswith("## "):
             text = line[3:]
             html_parts.append(f"""<section style="margin:28px 0 14px 0;text-align:center;"><p style="margin:0;font-size:20px;font-weight:bold;color:{style['accent']};border-bottom:2px solid {style['accent']};display:inline-block;padding-bottom:6px;">{text}</p></section>""")
-        # 数字/数据行（包含 > 数字格式的）
         elif "万" in line or "亿" in line or "$" in line or "%" in line:
             html_parts.append(f"""<p style="margin:0 0 18px 0;font-size:15px;color:{style['text']};line-height:1.9;"><strong>{line}</strong></p>""")
         elif line.startswith("- "):
             text = line[2:]
             html_parts.append(f"""<p style="margin:0 0 12px 0;padding-left:14px;font-size:14px;color:{style['text']};line-height:1.8;border-left:3px solid {style['accent']};">{text}</p>""")
         else:
-            # 普通段落
             html_parts.append(f"""<p style="margin:0 0 18px 0;font-size:15px;color:{style['text']};line-height:1.9;">{line}</p>""")
 
     # 结尾 CTA + 品牌条
@@ -448,7 +457,6 @@ def markdown_to_html(md_text, track_key):
 def extract_title_digest(article_text, track_name, date_str):
     """从文章中提取或生成标题和摘要"""
     lines = article_text.strip().split("\n")
-    # 取第一行非空行作为标题候选
     first_line = ""
     for line in lines:
         line = line.strip()
@@ -456,7 +464,6 @@ def extract_title_digest(article_text, track_name, date_str):
             first_line = line
             break
 
-    # 生成标题（最多64字节/约21个中文字符）
     if len(first_line) > 40:
         title = first_line[:40].rstrip("~") + "..."
     elif first_line:
@@ -464,7 +471,6 @@ def extract_title_digest(article_text, track_name, date_str):
     else:
         title = f"{track_name}出海买量新观察 | {date_str}"
 
-    # 生成摘要（约50字）
     preview = article_text[:120].replace("\n", " ").replace("~", "").strip()
     digest = preview[:90].rstrip() + "~" if len(preview) > 90 else preview + "~"
 
@@ -488,10 +494,10 @@ def publish_track(token, track_key, date_str, output_dir):
     title, digest = extract_title_digest(article_text, track_name, date_str)
     log.info(f"📌 标题: {title}")
 
-    # 3. 生成封面图
+    # 3. 生成封面图（Pollinations.ai 免费）
     cover_data = None
     try:
-        cover_data = generate_cover(track_key, title)
+        cover_data = generate_cover(track_key)
     except Exception as e:
         log.warning(f"封面图生成失败: {e}，将跳过封面")
 
@@ -529,9 +535,7 @@ def publish_track(token, track_key, date_str, output_dir):
         thumb_id = wechat_upload_cover(token, cover_path)
 
     # 9. 推送到草稿箱
-    # 清洗 HTML：去换行
-    html_clean = html_content.replace("\n", " ")
-    html_clean = html_clean.replace("\r", " ")
+    html_clean = html_content.replace("\n", " ").replace("\r", " ")
     html_clean = re.sub(r">\s+<", "><", html_clean)
     html_clean = html_clean.strip()
 
@@ -563,6 +567,7 @@ def main():
     log.info(f"📅 日期: {date_str}")
     log.info(f"📂 输出: {output_dir}")
     log.info(f"🏷️  赛道: {', '.join(args.tracks)}")
+    log.info(f"🤖 AI: Google Gemini (免费) | 🎨 封面: Pollinations.ai (免费)")
 
     # 获取微信 token
     token = None
@@ -575,6 +580,8 @@ def main():
             draft_id, info = publish_track(token, track_key, date_str, output_dir)
             if draft_id:
                 results[track_key] = {"draft_id": draft_id, **info}
+            # Gemini 免费额度有 15 RPM 限制，加延迟
+            time.sleep(3)
         except Exception as e:
             log.error(f"❌ {TRACKS[track_key]['name']} 赛道处理失败: {e}")
             import traceback
