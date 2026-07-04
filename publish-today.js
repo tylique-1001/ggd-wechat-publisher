@@ -103,30 +103,79 @@ function uploadCover(token, imagePath) {
   });
 }
 
-async function createDraft(token, title, digest, contentHtml, coverImagePath) {
-  let thumbMediaId = DEFAULT_COVER_MEDIA_ID;
+// HTML 转纯文本（图片消息 content 仅支持纯文本）
+function htmlToText(html) {
+  return html
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/p>/gi, '\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&#39;/g, "'")
+    .replace(/&quot;/g, '"')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
 
-  // 如果有自定义封面图，上传并替换
+async function createDraft(token, entry, contentHtml, coverImagePath) {
+  const isImageType = entry.type === 'image';
+
+  // 上传封面/图片素材
+  let imageMediaId = null;
   if (coverImagePath && fs.existsSync(coverImagePath)) {
     try {
-      thumbMediaId = await uploadCover(token, coverImagePath);
-      console.log(`  📸 自定义封面上传成功: ${thumbMediaId}`);
+      imageMediaId = await uploadCover(token, coverImagePath);
+      console.log(`  📸 图片素材上传成功: ${imageMediaId}`);
     } catch (e) {
-      console.log(`  ⚠️ 封面图上传失败，使用默认封面: ${e.message}`);
+      console.log(`  ⚠️ 图片素材上传失败: ${e.message}`);
     }
   }
 
-  const payload = {
-    articles: [{
-      title,
-      author: AUTHOR,
-      digest: digest || '',
-      content: contentHtml,
-      thumb_media_id: thumbMediaId,
-      need_open_comment: 1,
-      only_fans_can_comment: 0,
-    }],
-  };
+  let payload;
+
+  if (isImageType) {
+    // ─── 图片消息 (newspic) ───
+    if (!imageMediaId) {
+      throw new Error('图片消息需要至少一张图片素材');
+    }
+    const textContent = htmlToText(contentHtml);
+    payload = {
+      articles: [{
+        article_type: 'newspic',
+        title: entry.title,
+        content: textContent,
+        need_open_comment: 1,
+        only_fans_can_comment: 0,
+        image_info: {
+          image_list: [
+            { image_media_id: imageMediaId }
+          ]
+        },
+        cover_info: {
+          crop_percent_list: [
+            { ratio: '1_1', x1: '0', y1: '0', x2: '1', y2: '1' }
+          ]
+        }
+      }]
+    };
+  } else {
+    // ─── 图文消息 (news) ───
+    const thumbMediaId = imageMediaId || DEFAULT_COVER_MEDIA_ID;
+    payload = {
+      articles: [{
+        article_type: 'news',
+        title: entry.title,
+        author: AUTHOR,
+        digest: entry.digest || '',
+        content: contentHtml,
+        thumb_media_id: thumbMediaId,
+        need_open_comment: 1,
+        only_fans_can_comment: 0,
+      }]
+    };
+  }
 
   // 微信 API 偶发 40007，加重试（最多 3 次，间隔 2s）
   let lastError;
@@ -250,7 +299,7 @@ async function main() {
       ? path.join(__dirname, 'content', 'covers', entry.cover_image)
       : null;
     try {
-      const mediaId = await createDraft(token, entry.title, entry.digest || '', html, coverPath);
+      const mediaId = await createDraft(token, entry, html, coverPath);
       console.log(`✅ [${entry.type}] "${entry.title}" → media_id: ${mediaId}`);
       pushed++;
     } catch (e) {
