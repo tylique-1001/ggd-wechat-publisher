@@ -247,7 +247,7 @@ async function main() {
 
     const html = fs.readFileSync(contentFile, 'utf-8');
     const coverPath = (entry.cover_image)
-      ? path.join(__dirname, 'content', subDir, entry.cover_image)
+      ? path.join(__dirname, 'content', 'covers', entry.cover_image)
       : null;
     try {
       const mediaId = await createDraft(token, entry.title, entry.digest || '', html, coverPath);

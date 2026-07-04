@@ -4,7 +4,8 @@
     "type": "image",
     "title": "袜子的胜利",
     "digest": "她终于学会自己脱袜子了",
-    "content_file": "2026-07-03-image.html"
+    "content_file": "2026-07-03-image.html",
+    "cover_image": ""
   },
   {
     "date": "2026-07-04",
@@ -12,28 +13,31 @@
     "title": "辅食大战第N天：今天南瓜泥又糊墙上了",
     "digest": "做了半小时，她吃了三口，剩下全抹在头发上",
     "content_file": "2026-07-04-article.html",
-    "cover_image": ""
+    "cover_image": "2026-07-04-article-cover.png"
   },
   {
     "date": "2026-07-04",
     "type": "image",
     "title": "她睡着了",
     "digest": "等了一整天，就为了这一刻",
-    "content_file": "2026-07-04-image.html"
+    "content_file": "2026-07-04-image.html",
+    "cover_image": "2026-07-04-image-cover.png"
   },
   {
     "date": "2026-07-05",
     "type": "image",
     "title": "爷爷的绝活",
     "digest": "爷爷今天又用奇怪的声音把她逗笑了",
-    "content_file": "2026-07-05-image.html"
+    "content_file": "2026-07-05-image.html",
+    "cover_image": "2026-07-05-image-cover.png"
   },
   {
     "date": "2026-07-06",
     "type": "image",
     "title": "今天翻出了什么",
     "digest": "她把抽屉里所有的遥控器都掏出来摆了一地",
-    "content_file": "2026-07-06-image.html"
+    "content_file": "2026-07-06-image.html",
+    "cover_image": "2026-07-06-image-cover.png"
   },
   {
     "date": "2026-07-07",
@@ -41,21 +45,23 @@
     "title": "新手爸爸的体检攻略：我带小Xi做一岁体检",
     "digest": "没人告诉过我，带一岁孩子体检，爸爸先得预习",
     "content_file": "2026-07-07-article.html",
-    "cover_image": ""
+    "cover_image": "2026-07-07-article-cover.png"
   },
   {
     "date": "2026-07-07",
     "type": "image",
     "title": "她会递东西给我了",
     "digest": "今天她把咬了一半的米饼塞到我嘴里",
-    "content_file": "2026-07-07-image.html"
+    "content_file": "2026-07-07-image.html",
+    "cover_image": "2026-07-07-image-cover.png"
   },
   {
     "date": "2026-07-08",
     "type": "image",
     "title": "奶奶说",
     "digest": "奶奶说今天中午她自己吃了半碗粥，虽然洒了三分之一",
-    "content_file": "2026-07-08-image.html"
+    "content_file": "2026-07-08-image.html",
+    "cover_image": "2026-07-08-image-cover.png"
   },
   {
     "date": "2026-07-09",
@@ -63,13 +69,14 @@
     "title": "她只让我抱。我怕了。",
     "digest": "奶奶一伸手她就扭头。我成了她唯一的安全区，这是一种什么样的感受",
     "content_file": "2026-07-09-article.html",
-    "cover_image": ""
+    "cover_image": "2026-07-09-article-cover.png"
   },
   {
     "date": "2026-07-09",
     "type": "image",
     "title": "半夜两点",
     "digest": "不知道第几次醒来，但是这次她没有哭",
-    "content_file": "2026-07-09-image.html"
+    "content_file": "2026-07-09-image.html",
+    "cover_image": "2026-07-09-image-cover.png"
   }
 ]
