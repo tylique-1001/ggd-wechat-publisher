@@ -1,0 +1,24 @@
+name: Keep Repository Alive
+
+on:   :
+  schedule:   时间表:
+    # 北京时间每天 8:30，比主推送(9:00)早半小时
+    - cron: "30 0 * * 1-5"- cron: "30 0 * * 1-5"；
+
+jobs:   工作:
+  keepalive:
+    runs-on: ubuntu-latest   上运行:ubuntu-latest
+    permissions:   权限:
+      contents: write   内容:写
+    steps:   步骤:
+      - uses: actions/checkout@v4-使用：actions/checkout@v4
+
+      - name: Update heartbeat timestamp—name：更新心跳时间戳
+        run: |   运行:|
+          date -u '+%Y-%m-%dT%H:%M:%SZ' > .heartbeatdate -u ' %Y-%m-%dT%H:% m:%SZ' > .心跳
+
+      - name: Commit and push   —name：提交和推送
+        run: |   运行:|
+          git config user.name "github-actions[bot]"git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"git config user.email "github-actions[bot]@users.noreply.github.com"
+          git
