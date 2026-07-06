@@ -57,10 +57,15 @@ function httpPostJson(url, body) {
 const TYPE_LABELS = { article: '📰 文章', image: '🖼️ 贴图' };
 
 async function sendLarkNotification(text) {
-  if (!LARK_WEBHOOK) return;
+  if (!LARK_WEBHOOK) {
+    console.log('  ⚠️ 飞书通知跳过：LARK_WEBHOOK 未配置');
+    return;
+  }
+  console.log(`  📨 发送飞书通知...`);
   try {
     const payload = { msg_type: 'text', content: { text } };
-    await httpPostJson(LARK_WEBHOOK, payload);
+    const res = await httpPostJson(LARK_WEBHOOK, payload);
+    console.log(`  📨 飞书通知响应: ${JSON.stringify(res)}`);
   } catch (e) {
     console.log(`  ⚠️ 飞书通知发送失败: ${e.message}`);
   }
@@ -317,17 +322,17 @@ async function main() {
       const mediaId = await createDraft(token, entry, html, coverPath);
       console.log(`✅ [${entry.type}] "${entry.title}" → media_id: ${mediaId}`);
       pushed++;
-      await sendLarkNotification(`${typeLabel}\n✅ 已推送到草稿箱\n标题：${entry.title}\n📅 ${today}（周${dow}）`);
+      await sendLarkNotification(`【公众号推送通知】${typeLabel}\n✅ 已推送到草稿箱\n标题：${entry.title}\n📅 ${today}（周${dow}）`);
     } catch (e) {
       console.log(`❌ [${entry.type}] "${entry.title}" 失败: ${e.message}`);
       failed++;
-      await sendLarkNotification(`${typeLabel}\n❌ 推送失败\n标题：${entry.title}\n原因：${e.message}\n📅 ${today}（周${dow}）`);
+      await sendLarkNotification(`【公众号推送通知】${typeLabel}\n❌ 推送失败\n标题：${entry.title}\n原因：${e.message}\n📅 ${today}（周${dow}）`);
     }
   }
 
   console.log(`🎉 今日推送完成 | 平台=${platform} 成功=${pushed} 跳过=${skipped} 失败=${failed}`);
   await sendLarkNotification(
-    `📊 今日推送汇总\n📅 ${today}（周${dow}）\n✅ 成功 ${pushed} 篇 | ⏭️ 跳过 ${skipped} 篇 | ❌ 失败 ${failed} 篇\n🖥️ 平台：${platform}`
+    `【公众号推送通知】📊 今日推送汇总\n📅 ${today}（周${dow}）\n✅ 成功 ${pushed} 篇 | ⏭️ 跳过 ${skipped} 篇 | ❌ 失败 ${failed} 篇\n🖥️ 平台：${platform}`
   );
 }
 
