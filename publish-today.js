@@ -332,7 +332,7 @@ async function main() {
 
   console.log(`🎉 今日推送完成 | 平台=${platform} 成功=${pushed} 跳过=${skipped} 失败=${failed}`);
   await sendLarkNotification(
-    `【公众号推送通知】📊 今日推送汇总\n📅 ${today}（周${dow}）\n✅ 成功 ${pushed} 篇 | ⏭️ 跳过 ${skipped} 篇 | ❌ 失败 ${failed} 篇\n🖥️ 平台：${platform}`
+    `【公众号推送通知】📊 今日推送汇总\n📅 ${today}（周${dow}）\n✅ 成功 ${pushed} 篇\n⏭️ 跳过 ${skipped} 篇\n❌ 失败 ${failed} 篇\n🖥️ 平台：${platform}`
   );
 }
 
