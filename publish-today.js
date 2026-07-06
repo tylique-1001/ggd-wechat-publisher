@@ -18,6 +18,7 @@ const path = require('path');
 const APPID = process.env.WECHAT_APPID || 'wx51779815b6bc189c';
 const APPSECRET = process.env.WECHAT_SECRET || '64e66fb2e99864d283759e1053f1ab23';
 const AUTHOR = 'Zylon';
+const LARK_WEBHOOK = process.env.LARK_WEBHOOK || '';
 
 // ─── HTTP helpers ───
 function httpGet(url) {
@@ -50,6 +51,19 @@ function httpPostJson(url, body) {
     req.write(payload);
     req.end();
   });
+}
+
+// ─── 飞书通知 ───
+const TYPE_LABELS = { article: '📰 文章', image: '🖼️ 贴图' };
+
+async function sendLarkNotification(text) {
+  if (!LARK_WEBHOOK) return;
+  try {
+    const payload = { msg_type: 'text', content: { text } };
+    await httpPostJson(LARK_WEBHOOK, payload);
+  } catch (e) {
+    console.log(`  ⚠️ 飞书通知发送失败: ${e.message}`);
+  }
 }
 
 // ─── WeChat API ───
@@ -298,17 +312,23 @@ async function main() {
     const coverPath = (entry.cover_image)
       ? path.join(__dirname, 'content', 'covers', entry.cover_image)
       : null;
+    const typeLabel = TYPE_LABELS[entry.type] || entry.type;
     try {
       const mediaId = await createDraft(token, entry, html, coverPath);
       console.log(`✅ [${entry.type}] "${entry.title}" → media_id: ${mediaId}`);
       pushed++;
+      await sendLarkNotification(`${typeLabel}\n✅ 已推送到草稿箱\n标题：${entry.title}\n📅 ${today}（周${dow}）`);
     } catch (e) {
       console.log(`❌ [${entry.type}] "${entry.title}" 失败: ${e.message}`);
       failed++;
+      await sendLarkNotification(`${typeLabel}\n❌ 推送失败\n标题：${entry.title}\n原因：${e.message}\n📅 ${today}（周${dow}）`);
     }
   }
 
   console.log(`🎉 今日推送完成 | 平台=${platform} 成功=${pushed} 跳过=${skipped} 失败=${failed}`);
+  await sendLarkNotification(
+    `📊 今日推送汇总\n📅 ${today}（周${dow}）\n✅ 成功 ${pushed} 篇 | ⏭️ 跳过 ${skipped} 篇 | ❌ 失败 ${failed} 篇\n🖥️ 平台：${platform}`
+  );
 }
 
 main().catch(e => {

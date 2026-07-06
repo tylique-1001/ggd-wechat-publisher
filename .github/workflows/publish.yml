@@ -28,4 +28,5 @@ jobs:
         env:
           WECHAT_APPID: ${{ secrets.WECHAT_APPID }}
           WECHAT_SECRET: ${{ secrets.WECHAT_SECRET }}
+          LARK_WEBHOOK: ${{ secrets.LARK_WEBHOOK }}
         run: node publish-today.js
