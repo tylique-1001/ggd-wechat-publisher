@@ -321,40 +321,69 @@ def generate_covers():
 # ============================================================
 # HTML 排版
 # ============================================================
+def _process_bold(text, accent_color):
+    """处理行内 **加粗** 标记为 <b> 标签"""
+    # 匹配 **文字** 并替换为 <b style="color:#c0392b;">文字</b>
+    result = re.sub(r'\*\*(.+?)\*\*', rf'<b style="color:{accent_color};">\1</b>', text)
+    return result
+
+
 def markdown_to_html(md_text, track_key):
+    """将 AI 生成的 Markdown 文本转换为微信兼容的 HTML
+    
+    排版铁律：不能让人看出来是AI写的。
+    用最简单的 HTML：段落 + 加粗 + 数字列表 + 少量颜色，
+    禁止 table / 进度条 / 卡片 / 渐变 / flexbox / grid
+    """
     styles = {
-        "game": {"bg": "#1a1a2e", "text": "#e0e0e0", "accent": "#dc2626", "accent2": "#fbbf24",
-                 "card_bg": "#16213e", "border": "#333"},
-        "tool": {"bg": "#ffffff", "text": "#333", "accent": "#0d9488", "accent2": "#14b8a6",
-                 "card_bg": "#f0fdf4", "border": "#e0e0e0"},
-        "drama": {"bg": "#faf9f7", "text": "#333", "accent": "#7c3aed", "accent2": "#f59e0b",
-                  "card_bg": "#fef3c7", "border": "#e0d5c8"},
+        "game": {"bg": "#ffffff", "text": "#2d2d2d", "accent": "#c0392b"},
+        "tool": {"bg": "#ffffff", "text": "#2d2d2d", "accent": "#0d9488"},
+        "drama": {"bg": "#ffffff", "text": "#2d2d2d", "accent": "#d97706"},
     }
     s = styles.get(track_key, styles["tool"])
 
     parts = [f"""<section style="padding:12px 10px;font-size:15px;line-height:1.88;color:{s['text']};word-break:break-all;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;background:{s['bg']};">"""]
-    parts.append(f"""<section style="text-align:center;margin-bottom:24px;padding:14px 0;border-bottom:1px solid {s['border']};"><p style="color:#999;font-size:12px;letter-spacing:1px;margin:0;">点击上方蓝字关注，每周解锁出海买量新玩法</p></section>""")
+    parts.append(f"""<p style="text-align:center;margin-bottom:20px;color:#999;font-size:12px;">点击上方蓝字关注，每周解锁出海买量新玩法~</p>""")
 
     for line in md_text.strip().split("\n"):
         line = line.strip()
         if not line:
             continue
-        if line.startswith("### "):
-            txt = line[4:]
-            parts.append(f"""<section style="margin:22px 0 12px 0;padding:10px 0;border-left:4px solid {s['accent']};padding-left:14px;"><p style="margin:0;font-size:17px;font-weight:bold;color:{s['accent']};">{txt}</p></section>""")
-        elif line.startswith("## "):
-            txt = line[3:]
-            parts.append(f"""<section style="margin:28px 0 14px 0;text-align:center;"><p style="margin:0;font-size:20px;font-weight:bold;color:{s['accent']};border-bottom:2px solid {s['accent']};display:inline-block;padding-bottom:6px;">{txt}</p></section>""")
-        elif any(k in line for k in ["万", "亿", "$", "%"]):
-            parts.append(f"""<p style="margin:0 0 18px 0;font-size:15px;color:{s['text']};line-height:1.9;"><strong>{line}</strong></p>""")
-        elif line.startswith("- "):
-            txt = line[2:]
-            parts.append(f"""<p style="margin:0 0 12px 0;padding-left:14px;font-size:14px;color:{s['text']};line-height:1.8;border-left:3px solid {s['accent']};">{txt}</p>""")
-        else:
-            parts.append(f"""<p style="margin:0 0 18px 0;font-size:15px;color:{s['text']};line-height:1.9;">{line}</p>""")
 
-    parts.append(f"""<section style="margin:30px 0;text-align:center;background:{s['card_bg']};border-radius:12px;padding:20px 18px;border:1px dashed {s['accent']};"><p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:{s['accent']};">想看广大大完整买量数据？</p><p style="margin:0;font-size:14px;color:{s['text']};">回复关键词获取更多数据~</p></section>""")
-    parts.append(f"""<section style="margin:20px 0 10px 0;text-align:center;padding-top:14px;border-top:1px solid {s['border']};"><p style="margin:0;font-size:11px;color:#999;">广大大 | 出海买量数据专家</p></section>""")
+        # 处理所有行内的 **加粗**
+        line = _process_bold(line, s["accent"])
+
+        if line.startswith("#### "):
+            # 四级标题 → 居中加粗小标题
+            txt = line[5:]
+            txt = re.sub(r'^\d+[\.、\s]', '', txt)  # 去掉开头的编号如 "1."
+            parts.append(f"""<p style="margin:24px 0 8px 0;font-size:17px;font-weight:bold;color:#1a1a1a;text-align:center;">{txt}</p>""")
+        elif line.startswith("### "):
+            # 三级标题 → 左边框强调
+            txt = line[4:]
+            parts.append(f"""<p style="margin:22px 0 10px 0;padding-left:12px;border-left:4px solid {s['accent']};font-size:17px;font-weight:bold;color:#1a1a1a;">{txt}</p>""")
+        elif line.startswith("## "):
+            # 二级标题 → 居中大标题
+            txt = line[3:]
+            parts.append(f"""<p style="margin:28px 0 14px 0;text-align:center;font-size:19px;font-weight:bold;color:{s['accent']};border-bottom:1px solid #eee;display:inline-block;padding-bottom:6px;">{txt}</p>""")
+        elif line.startswith("# "):
+            # 一级标题 → 大标题
+            txt = line[2:]
+            parts.append(f"""<p style="margin:28px 0 16px 0;font-size:20px;font-weight:bold;color:#1a1a1a;text-align:center;">{txt}</p>""")
+        elif line.startswith("- ") or line.startswith("—"):
+            # 无序列表 → 普通段落带前缀
+            prefix = "—" if line.startswith("- ") else ""
+            txt = line[2:] if line.startswith("- ") else line[1:].strip()
+            parts.append(f"""<p style="margin:4px 0 8px 18px;font-size:15px;color:{s['text']};line-height:1.9;">{prefix} {txt}</p>""")
+        elif re.match(r'^\d+[\.\、]\s', line):
+            # 有序列表 → 编号列表
+            parts.append(f"""<p style="margin:4px 0 8px 18px;font-size:15px;color:{s['text']};line-height:1.9;">{line}</p>""")
+        else:
+            # 普通段落
+            parts.append(f"""<p style="margin:0 0 14px 0;font-size:15px;color:{s['text']};line-height:1.88;">{line}</p>""")
+
+    parts.append(f"""<p style="margin:30px 0 10px 0;text-align:center;color:{s['accent']};font-size:14px;">想看完整买量数据？回复关键词获取更多~</p>""")
+    parts.append(f"""<p style="margin:20px 0 0 0;text-align:center;color:#bbb;font-size:11px;border-top:1px solid #eee;padding-top:14px;">广大大 | 出海买量数据专家</p>""")
     parts.append("</section>")
 
     return "\n".join(parts)
@@ -370,8 +399,43 @@ def extract_title_digest(text, track_name, date_str):
 
 
 # ============================================================
-# 主流程
+# 飞书通知（Webhook）
 # ============================================================
+def send_feishu_webhook(results, date_str, errors=None):
+    """通过飞书群机器人 webhook 发送推送通知（每篇一行带编号）"""
+    webhook_url = os.environ.get("FEISHU_WEBHOOK_URL", "")
+    if not webhook_url:
+        log.info("[INFO] FEISHU_WEBHOOK_URL 未设置，跳过飞书通知")
+        return
+
+    import urllib.request
+
+    success_list = [(k, v) for k, v in results.items()]
+    fail_list = errors or []
+
+    if success_list and not fail_list:
+        titles = "\n".join([f"{i+1}. {v['title']}" for i, (k, v) in enumerate(success_list)])
+        text = f"✅ 广大大推送完成({len(success_list)}篇):\n{titles}\n👉 前往草稿箱审核: https://mp.weixin.qq.com"
+    elif not success_list and fail_list:
+        text = f"⚠️ 全部失败({len(fail_list)}篇):\n" + "\n".join(fail_list)
+    else:
+        ok_titles = "\n".join([f"{i+1}. {v['title']}" for i, (k, v) in enumerate(success_list)])
+        fail_text = "\n".join(fail_list)
+        text = f"✅ 成功({len(success_list)}篇):\n{ok_titles}\n\n❌ 失败({len(fail_list)}篇):\n{fail_text}"
+
+    payload = json.dumps({"msg_type": "text", "content": {"text": text}}, ensure_ascii=False).encode("utf-8")
+    req = urllib.request.Request(
+        webhook_url,
+        data=payload,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            body = resp.read().decode("utf-8")
+            log.info(f"✅ 飞书通知已发送: {body}")
+    except Exception as e:
+        log.error(f"[ERROR] 飞书通知发送失败: {e}")
 def publish_track(token, track_key, date_str, cover_data, output_dir):
     track_name = TRACKS[track_key]["name"]
     log.info(f"\n{'='*40}\n📝 {track_name}\n{'='*40}")
@@ -450,6 +514,10 @@ def main():
     log.info(f"📌 审核发布: https://mp.weixin.qq.com → 草稿箱")
 
     print(json.dumps({k: {"draft_id": v["draft_id"], "title": v["title"]} for k, v in results.items()}, ensure_ascii=False))
+
+    # 飞书通知
+    if not args.dry_run:
+        send_feishu_webhook(results, date_str)
 
 
 if __name__ == "__main__":
