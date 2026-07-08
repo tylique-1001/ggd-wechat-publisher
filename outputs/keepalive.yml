@@ -1,0 +1,26 @@
+name: Keep Repository Alive
+
+on:
+  schedule:
+    # 北京时间每天 8:30，比主推送(9:00)早半小时
+    - cron: "30 0 * * 1-5"
+
+jobs:
+  keepalive:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Update heartbeat timestamp
+        run: |
+          date -u '+%Y-%m-%dT%H:%M:%SZ' > .heartbeat
+
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add .heartbeat
+          git commit -m "chore: daily heartbeat $(date -u '+%Y-%m-%d')" || exit 0
+          git push
