@@ -181,8 +181,8 @@ def clean_ai_content(text):
     if not text:
         return ""
     
-    # 1. 去除对话标记和角色标签行（user、assistant、system等）
-    dialogue_markers = ["user", "assistant", "system", "human", "请拆解", "请重新生成", "请修改", "/Dk", "Dk", "**1", "—**", "A A", "A AA"]
+    # 1. 逐行处理：去除对话标记和角色标签行
+    dialogue_markers = ["user", "assistant", "system", "human", "请拆解", "请重新生成", "请修改", "/Dk", "Dk", "**1", "—**"]
     lines = text.split("\n")
     cleaned_lines = []
     for line in lines:
@@ -190,72 +190,51 @@ def clean_ai_content(text):
         # 跳过纯对话标记行
         if stripped.lower() in ("user", "assistant", "system", "human"):
             continue
-        if stripped == "1" or stripped == "2" or stripped == "3":
+        if stripped in ("1", "2", "3"):
             continue
         # 跳过看起来是乱码的短行（只有A、*、数字等）
         if re.match(r'^[A-Za-z\*\s\-/]+$', stripped) and len(stripped) <= 10:
             continue
-        # 跳过包含对话指令的行
-        if any(marker in stripped for marker in dialogue_markers):
-            # 但如果整行包含正常文字，只去除标记部分
-            if len(stripped) > 30:
-                for m in dialogue_markers:
-                    stripped = stripped.replace(m, "").strip()
-                if stripped:
-                    cleaned_lines.append(stripped)
+        # 跳过包含对话指令的行（如果整行都很短）
+        if any(marker in stripped for marker in dialogue_markers) and len(stripped) < 30:
             continue
         cleaned_lines.append(line)
     
     text = "\n".join(cleaned_lines)
     
-    # 2. 去除AI套话开头
+    # 2. 逐行去除AI套话（用 replace，比正则更可靠）
     ai_openers = [
-        r"随着.*?的.*?，",
-        r"近年来.*?，",
-        r"在当今.*?，",
-        r"首先.*?，",
-        r"接下来.*?，",
-        r"首先[，,]?",
-        r"其次[，,]?",
-        r"最后[，,]?",
-        r"综上所述[，,]?",
-        r"总的来说[，,]?",
-        r"值得注意的是[，,]?",
-        r"不难发现[，,]?",
-        r"可以看出[，,]?",
-        r"众所周知[，,]?",
+        "随着", "近年来", "在当今", "首先", "其次", "最后", 
+        "综上所述", "总的来说", "值得注意的是", "不难发现", 
+        "可以看出", "众所周知", "接下来", "请拆解", "请分析", "请重新生成",
     ]
-    for pattern in ai_openers:
-        text = re.sub(pattern, "", text, count=1, flags=re.IGNORECASE)
+    lines = text.split("\n")
+    cleaned_lines = []
+    for line in lines:
+        for opener in ai_openers:
+            line = line.replace(opener, "")
+        # 去除开头的逗号、句号、空格
+        line = line.lstrip("，,.。~ ")
+        if line.strip():
+            cleaned_lines.append(line)
+    text = "\n".join(cleaned_lines)
     
-    # 3. 去除多余空行和开头空格
-    text = re.sub(r'\n{3,}', '\n\n', text)
-    text = text.strip()
+    # 3. 去除末尾不完整的"据数据显示~数字"（逐行检查）
+    lines = text.split("\n")
+    cleaned_lines = []
+    for line in lines:
+        if re.search(r'据数据显示~\d+$', line.strip()):
+            # 去掉末尾的"据数据显示~数字"
+            line = re.sub(r'据数据显示~\d+$', '', line.strip()).strip()
+        if line.strip():
+            cleaned_lines.append(line)
+    text = "\n".join(cleaned_lines)
     
-    # 4. 去除末尾不完整的句子（如"据数据显示~2"后面没有内容）
-    text = re.sub(r'据数据显示~\d+$', '', text)
-    text = re.sub(r'据数据显示~\d+\s*$', '', text)
-    
-    # 5. 去除孤立的编号（如 "1." 单独一行）
-    text = re.sub(r'\n\d+[\.\、]\s*\n', '\n', text)
-    
-    # 6. 去除 "**" 加粗标记（要求AI纯文本输出，但万一有残留）
-    text = text.replace("**", "")
-    
-    # 7. 去除多余的 "~" 符号（连续多个）
+    # 4. 去除多余的 "~" 符号（连续多个）
     text = re.sub(r'~{2,}', '~', text)
+    text = re.sub(r'~\s*~', '~', text)
     
-    # 8. 去除 "user" 和 "assistant" 标签
-    text = re.sub(r'\buser\b', '', text, flags=re.IGNORECASE)
-    text = re.sub(r'\bassistant\b', '', text, flags=re.IGNORECASE)
-    text = re.sub(r'\bhuman\b', '', text, flags=re.IGNORECASE)
-    
-    # 9. 去除 "请拆解..." 等指令残留
-    text = re.sub(r'请拆解.*?[。~]', '~', text)
-    text = re.sub(r'请分析.*?[。~]', '~', text)
-    text = re.sub(r'请重新生成.*?[。~]', '~', text)
-    
-    # 10. 最后清理多余空行
+    # 5. 去除多余空行
     text = re.sub(r'\n{3,}', '\n\n', text).strip()
     
     return text
