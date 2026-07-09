@@ -318,15 +318,44 @@ async function main() {
       ? path.join(__dirname, 'content', 'covers', entry.cover_image)
       : null;
     const typeLabel = TYPE_LABELS[entry.type] || entry.type;
-    try {
-      const mediaId = await createDraft(token, entry, html, coverPath);
-      console.log(`✅ [${entry.type}] "${entry.title}" → media_id: ${mediaId}`);
-      pushed++;
+    // 单篇重试：最多3次（首次+2次重试），间隔3秒
+    let mediaId = null;
+    let pushOk = false;
+    let lastErr = null;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        // 每次重试前刷新 token（防止过期）
+        if (attempt > 1) {
+          tokenCache = null;
+          const freshToken = await getToken();
+          // 重试前重新检查草稿箱（防止上次其实成功了）
+          const recheckTitles = await checkExistingDrafts(freshToken);
+          if (recheckTitles.includes(entry.title)) {
+            console.log(`  ⏭️ 重试发现草稿已存在，跳过: "${entry.title}"`);
+            pushed++;
+            pushOk = true;
+            break;
+          }
+        }
+        mediaId = await createDraft(tokenCache ? tokenCache.token : await getToken(), entry, html, coverPath);
+        console.log(`✅ [${entry.type}] "${entry.title}" → media_id: ${mediaId}${attempt > 1 ? ` (重试${attempt}次后成功)` : ''}`);
+        pushed++;
+        pushOk = true;
+        break;
+      } catch (e) {
+        lastErr = e;
+        console.log(`❌ [${entry.type}] "${entry.title}" 第${attempt}次失败: ${e.message}`);
+        if (attempt < 3) {
+          console.log(`  ⏳ ${3}秒后重试...`);
+          await new Promise(r => setTimeout(r, 3000));
+        }
+      }
+    }
+    if (pushOk) {
       await sendLarkNotification(`【公众号推送通知】${typeLabel}\n✅ 已推送到草稿箱\n标题：${entry.title}\n📅 ${today}（周${dow}）`);
-    } catch (e) {
-      console.log(`❌ [${entry.type}] "${entry.title}" 失败: ${e.message}`);
+    } else {
       failed++;
-      await sendLarkNotification(`【公众号推送通知】${typeLabel}\n❌ 推送失败\n标题：${entry.title}\n原因：${e.message}\n📅 ${today}（周${dow}）`);
+      await sendLarkNotification(`【公众号推送通知】${typeLabel}\n❌ 推送失败（重试3次均失败）\n标题：${entry.title}\n原因：${lastErr ? lastErr.message : '未知'}\n📅 ${today}（周${dow}）`);
     }
   }
 
@@ -336,7 +365,20 @@ async function main() {
   );
 }
 
+// ─── 全局超时：最多执行 5 分钟 ───
+const TIMEOUT_MS = 5 * 60 * 1000;
+const timer = setTimeout(() => {
+  console.error('💥 执行超时（5分钟），强制退出');
+  sendLarkNotification('【公众号推送通知】🚨 执行超时（5分钟强制退出）\n请手动检查').then(() => process.exit(1));
+}, TIMEOUT_MS);
+timer.unref(); // 不阻止进程正常退出
+
 main().catch(e => {
   console.error(`💥 致命错误: ${e.message}`);
-  process.exit(1);
+  sendLarkNotification(`【公众号推送通知】🚨 脚本致命错误\n原因：${e.message}`).then(() => {
+    clearTimeout(timer);
+    process.exit(1);
+  });
+}).then(() => {
+  clearTimeout(timer);
 });
