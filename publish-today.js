@@ -360,9 +360,15 @@ async function main() {
   }
 
   console.log(`🎉 今日推送完成 | 平台=${platform} 成功=${pushed} 跳过=${skipped} 失败=${failed}`);
-  await sendLarkNotification(
-    `【公众号推送通知】📊 今日推送汇总\n📅 ${today}（周${dow}）\n✅ 成功 ${pushed} 篇\n⏭️ 跳过 ${skipped} 篇\n❌ 失败 ${failed} 篇\n🖥️ 平台：${platform}`
-  );
+  // 只有实际推送了内容（pushed > 0）或有失败（failed > 0）才发汇总通知
+  // 全部跳过时不发，避免 8 次 cron 兜底产生大量无意义汇总
+  if (pushed > 0 || failed > 0) {
+    await sendLarkNotification(
+      `【公众号推送通知】📊 今日推送汇总\n📅 ${today}（周${dow}）\n✅ 成功 ${pushed} 篇\n⏭️ 跳过 ${skipped} 篇\n❌ 失败 ${failed} 篇\n🖥️ 平台：${platform}`
+    );
+  } else {
+    console.log(`📊 全部跳过，不发汇总通知`);
+  }
 }
 
 // ─── 全局超时：最多执行 5 分钟 ───
