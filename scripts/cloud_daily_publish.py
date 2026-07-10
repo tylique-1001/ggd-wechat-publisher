@@ -608,12 +608,44 @@ def publish_track(token, track_key, date_str, cover_data, output_dir):
     return draft_id, {"title": title, "digest": digest}
 
 
+def already_published_today(date_str):
+    """检查今天是否已经有成功的 workflow 运行（防重复推送）"""
+    gh_token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN", "")
+    if not gh_token:
+        log.info("[INFO] 无 GH_TOKEN，跳过去重检查")
+        return False
+
+    try:
+        import urllib.request
+        url = (
+            f"https://api.github.com/repos/tylique-1001/ggd-wechat-publisher/actions/workflows/publish-daily.yml/runs"
+            f"?status=success&created={date_str}&per_page=5"
+        )
+        req = urllib.request.Request(url, headers={
+            "Authorization": f"Bearer {gh_token}",
+            "Accept": "application/vnd.github.v3+json",
+            "User-Agent": "ggd-publisher",
+        })
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode())
+        count = data.get("total_count", 0)
+        if count > 0:
+            log.info(f"[DEDUP] {date_str} 已有 {count} 次成功运行，跳过")
+            return True
+        log.info(f"[DEDUP] {date_str} 无历史成功运行，继续执行")
+        return False
+    except Exception as e:
+        log.warning(f"[WARN] 去重检查失败（不影响执行）: {e}")
+        return False
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--date", default=datetime.now().strftime("%Y-%m-%d"))
     parser.add_argument("--tracks", nargs="+", choices=["game", "tool", "drama"], default=["game", "tool", "drama"])
     parser.add_argument("--output", default="/tmp/gzh_output")
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--force", action="store_true", help="忽略去重检查，强制推送")
     args = parser.parse_args()
 
     date_str = args.date
@@ -622,6 +654,13 @@ def main():
 
     log.info(f"🚀 广大大云端发布 | {date_str}")
     log.info(f"🤖 硅基流动(国内永久免费) | 🎨 PIL本地封面")
+
+    # 去重检查（Public repo 的 cron 可能准点多次触发）
+    if not args.force and not args.dry_run:
+        if already_published_today(date_str):
+            log.info("✅ 今天已推送，退出")
+            print(json.dumps({"skipped": True, "reason": f"{date_str} already published", "date": date_str}))
+            return
 
     cover_datas = generate_covers()
 

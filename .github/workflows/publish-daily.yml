@@ -2,7 +2,13 @@ name: 每日推送
 
 on:
   schedule:
+    # Public 仓库的 cron 准点触发~跑5次兜底，去重逻辑自动跳过已推送
+    # 北京时间 9:00 / 10:00 / 11:00 / 12:00 / 13:00
     - cron: '0 1 * * 1-5'
+    - cron: '0 2 * * 1-5'
+    - cron: '0 3 * * 1-5'
+    - cron: '0 4 * * 1-5'
+    - cron: '0 5 * * 1-5'
   workflow_dispatch:
 
 jobs:
@@ -28,5 +34,6 @@ jobs:
           WEIXIN_APPID: ${{ secrets.WEIXIN_APPID }}
           WEIXIN_SECRET: ${{ secrets.WEIXIN_SECRET }}
           FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_WEBHOOK_URL }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           python scripts/cloud_daily_publish.py --date "$(date +%Y-%m-%d)"
