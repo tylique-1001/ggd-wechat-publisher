@@ -535,7 +535,11 @@ def extract_title_digest(text, track_name, date_str):
 # 飞书通知（Webhook）
 # ============================================================
 def send_feishu_webhook(results, date_str, errors=None):
-    """通过飞书群机器人 webhook 发送推送通知（每篇一行带编号）"""
+    """通过飞书群机器人 webhook 发送推送通知（每篇一行带编号）
+    
+    注意：飞书webhook设置了关键词安全验证，关键词是"公众号"，
+    所有消息必须包含"公众号"才能发送成功。
+    """
     webhook_url = os.environ.get("FEISHU_WEBHOOK_URL", "")
     if not webhook_url:
         log.info("[INFO] FEISHU_WEBHOOK_URL 未设置，跳过飞书通知")
@@ -546,15 +550,16 @@ def send_feishu_webhook(results, date_str, errors=None):
     success_list = [(k, v) for k, v in results.items()]
     fail_list = errors or []
 
+    # 飞书webhook关键词是"公众号"，每条消息必须包含
     if success_list and not fail_list:
         titles = "\n".join([f"{i+1}. {v['title']}" for i, (k, v) in enumerate(success_list)])
-        text = f"✅ 广大大推送完成({len(success_list)}篇):\n{titles}\n👉 前往草稿箱审核: https://mp.weixin.qq.com"
+        text = f"✅ 公众号推送完成({len(success_list)}篇) | {date_str}\n{titles}\n👉 前往草稿箱审核: https://mp.weixin.qq.com"
     elif not success_list and fail_list:
-        text = f"⚠️ 全部失败({len(fail_list)}篇):\n" + "\n".join(fail_list)
+        text = f"⚠️ 公众号推送全部失败({len(fail_list)}篇) | {date_str}\n" + "\n".join(fail_list)
     else:
         ok_titles = "\n".join([f"{i+1}. {v['title']}" for i, (k, v) in enumerate(success_list)])
         fail_text = "\n".join(fail_list)
-        text = f"✅ 成功({len(success_list)}篇):\n{ok_titles}\n\n❌ 失败({len(fail_list)}篇):\n{fail_text}"
+        text = f"✅ 公众号推送成功({len(success_list)}篇) | {date_str}\n{ok_titles}\n\n❌ 失败({len(fail_list)}篇):\n{fail_text}"
 
     payload = json.dumps({"msg_type": "text", "content": {"text": text}}, ensure_ascii=False).encode("utf-8")
     req = urllib.request.Request(
