@@ -18,6 +18,15 @@ on:
     - cron: '0 4 * * 1-5'
     - cron: '0 5 * * 1-5'
   workflow_dispatch:
+    inputs:
+      force:
+        description: '强制推送（忽略去重）'
+        required: false
+        default: 'false'
+      track:
+        description: '手动指定赛道（game/tool/drama，留空自动轮换）'
+        required: false
+        default: ''
 
 jobs:
   publish:
@@ -44,4 +53,11 @@ jobs:
           FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_WEBHOOK_URL }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          python scripts/cloud_daily_publish.py --date "$(date +%Y-%m-%d)"
+          ARGS="--date $(date +%Y-%m-%d)"
+          if [ "${{ github.event.inputs.force }}" = "true" ]; then
+            ARGS="$ARGS --force"
+          fi
+          if [ -n "${{ github.event.inputs.track }}" ]; then
+            ARGS="$ARGS --track ${{ github.event.inputs.track }}"
+          fi
+          python scripts/cloud_daily_publish.py $ARGS
