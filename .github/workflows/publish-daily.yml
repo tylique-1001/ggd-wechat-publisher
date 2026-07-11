@@ -2,7 +2,7 @@ name: 每日推送
 
 on:
   schedule:
-    # GitHub Actions cron 高峰期延迟严重，密集投放提高命中率
+    # 方案A：每日1篇（按星期轮换赛道），降频提质
     # 去重逻辑保证只推一次，多触发的自动跳过
     # UTC 23:00 = 北京 7:00（前一天，0-4=周日到周四对应北京周一到周五）
     - cron: '0 23 * * 0-4'
@@ -22,7 +22,7 @@ on:
 jobs:
   publish:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 15
 
     steps:
       - name: 检出代码
@@ -36,7 +36,7 @@ jobs:
       - name: 安装依赖
         run: pip install openai pillow requests
 
-      - name: 生成并推送文章
+      - name: 生成并推送文章（每日1篇）
         env:
           SILICONFLOW_API_KEY: ${{ secrets.SILICONFLOW_API_KEY }}
           WEIXIN_APPID: ${{ secrets.WEIXIN_APPID }}
