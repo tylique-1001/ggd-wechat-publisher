@@ -42,9 +42,10 @@ AUTHOR = "zylon"
 
 # 硅基流动（国内，兼容 OpenAI SDK）
 SILICONFLOW_BASE = "https://api.siliconflow.cn/v1"
-# DeepSeek-V3：大幅提升内容质量，减少幻觉和语法错误
-# 费用极低（约¥0.01/篇），质量远超Qwen2.5-7B
-SILICONFLOW_MODEL = "deepseek-ai/DeepSeek-V3"
+# 优先使用DeepSeek-V3（质量最好），余额不足时回退到Qwen2.5-7B（免费）
+SILICONFLOW_MODEL_PREFERRED = "deepseek-ai/DeepSeek-V3"
+SILICONFLOW_MODEL_FALLBACK = "Qwen/Qwen2.5-7B-Instruct"
+SILICONFLOW_MODEL = SILICONFLOW_MODEL_PREFERRED
 
 # 竞品黑名单（出现=推送事故）
 BANNED_COMPETITORS = [
@@ -594,17 +595,33 @@ def generate_article(pillar_key, track_key, date_str, retry=0, max_retry=3):
 
     client = get_siliconflow_client()
 
-    resp = client.chat.completions.create(
-        model=SILICONFLOW_MODEL,
-        messages=[
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": prompt},
-        ],
-        temperature=0.7,
-        max_tokens=8000,
-    )
+    # 优先使用DeepSeek-V3，余额不足时回退到Qwen2.5-7B（免费）
+    models_to_try = [SILICONFLOW_MODEL_PREFERRED, SILICONFLOW_MODEL_FALLBACK]
+    text = None
+    for model_name in models_to_try:
+        try:
+            log.info(f"使用模型: {model_name}")
+            resp = client.chat.completions.create(
+                model=model_name,
+                messages=[
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": prompt},
+                ],
+                temperature=0.7,
+                max_tokens=8000,
+            )
+            text = resp.choices[0].message.content
+            break
+        except Exception as e:
+            err_str = str(e)
+            if "balance" in err_str.lower() or "30001" in err_str:
+                log.warning(f"{model_name} 余额不足，尝试下一个模型...")
+                continue
+            else:
+                raise e
 
-    text = resp.choices[0].message.content
+    if not text:
+        raise RuntimeError("所有模型都失败了")
     text = clean_ai_content(text)
 
     # 质量检查
@@ -1033,7 +1050,7 @@ def main():
     pillar_name = PILLARS[pillar_key]["name"]
     track_info = f" | 赛道: {TRACKS[track_key]['name']}" if track_key else ""
     log.info(f"广大大云端发布 | {date_str} | 支柱: {pillar_name}{track_info}")
-    log.info(f"模型: {SILICONFLOW_MODEL} | 封面: PIL本地")
+    log.info(f"模型: {SILICONFLOW_MODEL_PREFERRED} (fallback: {SILICONFLOW_MODEL_FALLBACK})")
 
     # 去重检查
     if not args.force and not args.dry_run:
