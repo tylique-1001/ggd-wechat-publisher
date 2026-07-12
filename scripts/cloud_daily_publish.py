@@ -267,6 +267,8 @@ SYSTEM_PROMPT = f"""你是广大大(SocialPeta)公众号的资深编辑，在出
 - 不超过25字
 - 禁止套路：XX%/暴涨/飙升/头部玩家/月入XX万/XX万美元/还在XX就是XX
 - 不要用"|"分隔符
+- 标题不要包含"竞品拆解台""方法论""月报""客户故事"等栏目名
+- 标题不要加#号或任何markdown标记
 
 数据规则：
 - 数据来源只能用：{', '.join(SAFE_SOURCES)}
@@ -745,20 +747,29 @@ def extract_title_digest(text, pillar_name, date_str):
             body_start = i + 1
             break
 
+    # 清洗标题：去掉markdown的#号前缀
+    title_line = re.sub(r'^#+\s*', '', title_line).strip()
+    # 去掉支柱名称前缀（如"竞品拆解台："）
+    pillar_prefixes = ["竞品拆解台", "方法论实战", "数据月报", "客户故事", "互动参与"]
+    for prefix in pillar_prefixes:
+        if title_line.startswith(prefix):
+            title_line = title_line[len(prefix):].lstrip("：: -—").strip()
+
     ok, reason = check_title_quality(title_line)
     if not ok:
         log.warning(f"标题问题: {reason}，使用备用标题")
         for line in lines[body_start:]:
             stripped = line.strip()
             if stripped and len(stripped) > 5:
+                stripped = re.sub(r'^#+\s*', '', stripped).strip()
                 title_line = stripped[:25].rstrip("~") + "~"
                 break
         else:
-            title_line = f"{pillar_name} | {date_str}"
+            title_line = f"出海买量观察 {date_str}"
 
     title = title_line[:30].rstrip("~")
     if not title:
-        title = f"{pillar_name} | {date_str}"
+        title = f"出海买量观察 {date_str}"
 
     body_lines = lines[body_start:]
     body_text = " ".join(l.strip() for l in body_lines if l.strip())
