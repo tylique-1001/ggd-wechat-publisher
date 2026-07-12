@@ -279,7 +279,7 @@ SYSTEM_PROMPT = f"""你是广大大(SocialPeta)公众号的资深编辑，在出
 2. 禁止AI套话：随着/近年来/在当今/首先/其次/最后/此外/值得注意的是/综上所述/总的来说/不难发现/可以看出
 3. 禁止破折号——/禁止"不仅而且"/禁止硬凑三点
 4. 正文禁止emoji
-5. 不低于800字
+5. 不低于1000字
 6. 只用自然段落写作，绝对不要列表/编号/表格/加粗标题
 7. 绝对不要写小标题或章节标记，不要出现"数据总览""素材拆解""问题场景"这种分段标题，让结构自然融入叙述
 8. 不要用#号或任何markdown标记
@@ -378,7 +378,7 @@ def clean_ai_content(text):
 
 def check_content_quality(text):
     """检查内容质量"""
-    if not text or len(text) < 300:
+    if not text or len(text) < 500:
         return False, f"内容太短({len(text)}字)"
     dialogue_words = ["user", "assistant", "system", "请拆解", "请重新生成", "请分析"]
     for word in dialogue_words:
@@ -505,7 +505,7 @@ def generate_article(pillar_key, track_key, date_str, retry=0, max_retry=3):
 - 句号用~，禁止emoji，禁止竞品名
 - 第一行是标题（纯文字，不超过25字，口语化，不加#不加前缀）
 - 标题后空一行，然后是正文
-- 正文不低于800字
+- 正文不低于1000字
 - 正文不要出现任何小标题、不要用#号、不要用加粗
 - 结尾引导回复「{cta_keyword}」获取完整素材包
 
@@ -533,7 +533,7 @@ def generate_article(pillar_key, track_key, date_str, retry=0, max_retry=3):
 - 句号用~，禁止emoji，禁止竞品名
 - 第一行是标题（纯文字，不超过25字，口语化，不加#不加前缀）
 - 标题后空一行，然后是正文
-- 正文不低于800字
+- 正文不低于1000字
 - 正文不要出现任何小标题、不要用#号、不要用加粗
 - 结尾引导回复「{cta_keyword}」获取操作手册
 
@@ -558,7 +558,7 @@ def generate_article(pillar_key, track_key, date_str, retry=0, max_retry=3):
 - 句号用~，禁止emoji，禁止竞品名
 - 第一行是标题（纯文字，不超过25字）
 - 标题后空一行，然后是正文
-- 正文不低于800字
+- 正文不低于1000字
 - 正文不要出现任何小标题、不要用#号、不要用加粗
 - 结尾引导回复「{cta_keyword}」下载完整报告
 
@@ -582,7 +582,7 @@ def generate_article(pillar_key, track_key, date_str, retry=0, max_retry=3):
 - 句号用~，禁止emoji，禁止竞品名
 - 第一行是标题（纯文字，不超过25字，口语化，不加#不加前缀）
 - 标题后空一行，然后是正文
-- 正文不低于800字
+- 正文不低于1000字
 - 正文不要出现任何小标题、不要用#号、不要用加粗
 - 结尾引导回复「{cta_keyword}」获取类似案例分析
 
