@@ -40,9 +40,11 @@ WEIXIN_APPID = os.environ.get("WEIXIN_APPID", "wx94eb6ba27c82a203")
 WEIXIN_SECRET = os.environ.get("WEIXIN_SECRET", "")
 AUTHOR = "zylon"
 
-# 硅基流动（国内，永久免费，兼容 OpenAI SDK）
+# 硅基流动（国内，兼容 OpenAI SDK）
 SILICONFLOW_BASE = "https://api.siliconflow.cn/v1"
-SILICONFLOW_MODEL = "Qwen/Qwen2.5-7B-Instruct"
+# DeepSeek-V3：大幅提升内容质量，减少幻觉和语法错误
+# 费用极低（约¥0.01/篇），质量远超Qwen2.5-7B
+SILICONFLOW_MODEL = "deepseek-ai/DeepSeek-V3"
 
 # 竞品黑名单（出现=推送事故）
 BANNED_COMPETITORS = [
@@ -165,13 +167,32 @@ def search_news(query, num=5):
         results = []
         for item in items:
             title = item.findtext("title", "").strip()
+            desc = item.findtext("description", "").strip()
             if title:
-                results.append(f"- {title}")
-        log.info(f"🔍 搜索「{query[:20]}...」获取到 {len(results)} 条新闻")
+                # 同时收集标题和描述，给AI更多信息
+                results.append(f"- {title}" + (f"（{desc[:100]}）" if desc and desc != title else ""))
+        log.info(f"搜索「{query[:30]}...」获取到 {len(results)} 条新闻")
         return "\n".join(results) if results else ""
     except Exception as e:
         log.warning(f"[WARN] 搜索失败（不影响生成）: {e}")
         return ""
+
+
+def search_product_data(track_key, products):
+    """搜索具体产品的买量数据，返回多维度搜索结果"""
+    all_results = []
+    # 搜索2-3个具体产品
+    for product in products[:3]:
+        query = f"{product} 出海 买量 广告 投放 2026"
+        news = search_news(query, num=3)
+        if news:
+            all_results.append(f"【{product}】\n{news}")
+    # 再搜一个行业趋势
+    trend_query = f"出海买量 {track_key} 趋势 2026"
+    trend_news = search_news(trend_query, num=3)
+    if trend_news:
+        all_results.append(f"【行业趋势】\n{trend_news}")
+    return "\n\n".join(all_results) if all_results else "（未搜索到相关新闻）"
 
 
 # ============================================================
@@ -241,48 +262,53 @@ def get_siliconflow_client():
 # ============================================================
 SYSTEM_PROMPT = f"""你是广大大(SocialPeta)公众号的资深编辑，在出海买量行业干了多年~
 
-你写文章的风格（重要，必须遵循）：
+## 最重要的一条规则（违反=废稿）
+你手里没有广大大的实时数据。你不能编造任何具体数字。
+如果你在搜索结果里看到了某个数据，可以引用并标注来源。
+如果没看到，就写你的分析、观点、判断、行业观察——但不要编一个精确数字出来。
+比如可以写"从行业整体来看，短剧出海的买量成本在持续走高"，但不能写"ReelShort上月投放了12万条广告"——除非搜索结果里有这个数据。
+
+## 写作风格
 - 像跟同行吃饭时聊起一个案例：有故事、有数据、有观点、有建议
-- 不是在写报告，是在分享你看到的行业现象和你的判断
-- 用具体的产品名、具体的数据、具体的场景，不要泛泛而谈
 - 有情绪和态度：会震惊、会困惑、会兴奋、会吐槽
 - 给读者可落地的行动建议，不是空谈理论
-- 像方案里的范文那样：开头用一个真实场景引入，中间用数据说话，结尾给行动建议
+- 用具体的产品名和具体的场景，不要泛泛而谈
 
-写作铁律（违反=废稿）：
+## 写作铁律
 1. 句号用~代替（不用。！）
 2. 禁止AI套话：随着/近年来/在当今/首先/其次/最后/此外/值得注意的是/综上所述/总的来说/不难发现/可以看出
 3. 禁止破折号——/禁止"不仅而且"/禁止硬凑三点
 4. 正文禁止emoji
 5. 不低于800字
-6. 数据要具体：说清楚是哪个产品、多少广告量、多少素材量、什么地区
-7. 每篇结尾引导回复关键词获取资料
-8. 只用自然段落写作，不要列表/编号/表格/加粗标题
-9. 数据穿插在叙述里，不要单独列出来
-10. 开头直接说事，不要铺垫背景
+6. 只用自然段落写作，绝对不要列表/编号/表格/加粗标题
+7. 绝对不要写小标题或章节标记，不要出现"数据总览""素材拆解""问题场景"这种分段标题，让结构自然融入叙述
+8. 不要用#号或任何markdown标记
+9. 开头直接说事，不要铺垫背景
+10. 每篇结尾引导回复关键词获取资料
 
-标题要求：
+## 标题要求
 - 像朋友发你的微信消息，不像新闻标题
-- 可以用问句、感叹句、口语化表达
 - 不超过25字
-- 禁止套路：XX%/暴涨/飙升/头部玩家/月入XX万/XX万美元/还在XX就是XX
+- 禁止：XX%/暴涨/飙升/头部玩家/月入XX万
 - 不要用"|"分隔符
-- 标题不要包含"竞品拆解台""方法论""月报""客户故事"等栏目名
-- 标题不要加#号或任何markdown标记
+- 不要包含"竞品拆解台""方法论"等栏目名
+- 不要加#号或任何标记
+- 第一行直接写标题文字，不加任何前缀
 
-数据规则：
-- 数据来源只能用：{', '.join(SAFE_SOURCES)}
-- 不确定就写范围或趋势（"大概""可能""我记得好像是"），不要编精确数字
-- 数据是文章的核心，不是辅助
+## 数据规则
+- 只引用搜索结果中出现的数据，标注来源
+- 没有搜索结果支撑的，写趋势性判断（"大概""可能""我记得好像是"）
+- 绝对禁止编造精确数字
+- 绝对禁止写"据广大大数据显示"——你手里没有广大大数据
+- 可以写"从广大大的行业观察来看"这种定性描述
 
-竞品黑名单（绝对禁止出现）：
+## 竞品黑名单（绝对禁止出现）
 {', '.join(BANNED_COMPETITORS)}
 
-输出格式：
-第一行：标题（不加#号，不加书名号）
+## 输出格式
+第一行：标题（纯文字，不加#不加书名号不加前缀）
 空一行
-然后是正文段落~
-不要加任何格式标记（如**加粗**、#### 标题等）"""
+然后是正文段落~"""
 
 
 # ============================================================
@@ -292,6 +318,23 @@ def clean_ai_content(text):
     """清洗AI生成的内容"""
     if not text:
         return ""
+
+    # 去除body中的#小标题行（如"### 数据总览"）
+    # 保留第一行（可能是标题）
+    lines = text.split("\n")
+    cleaned_lines = []
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        # 如果是#开头的行且不是第一行，去掉#号保留内容（或整行去掉如果是短标题）
+        if i > 0 and stripped.startswith("#"):
+            txt = stripped.lstrip("#").strip()
+            # 如果是短小标题（如"数据总览""问题场景"），直接去掉
+            if len(txt) <= 10 and not any(c in txt for c in "~。，；！？"):
+                continue
+            # 否则保留内容但去掉#号
+            line = txt
+        cleaned_lines.append(line)
+    text = "\n".join(cleaned_lines)
 
     dialogue_markers = ["user", "assistant", "system", "human", "请拆解", "请重新生成", "请修改", "/Dk", "Dk", "**1", "—**"]
     lines = text.split("\n")
@@ -306,6 +349,8 @@ def clean_ai_content(text):
             continue
         if any(marker in stripped for marker in dialogue_markers) and len(stripped) < 30:
             continue
+        # 去除所有**加粗**标记（正文不使用加粗）
+        line = re.sub(r'\*\*(.+?)\*\*', r'\1', line)
         cleaned_lines.append(line)
 
     text = "\n".join(cleaned_lines)
@@ -423,117 +468,122 @@ def generate_article(pillar_key, track_key, date_str, retry=0, max_retry=3):
     structure_text = "\n".join(f"{i+1}. {s}" for i, s in enumerate(pillar["structure"]))
     cta_keyword = pillar.get("cta_keyword", "资料")
 
-    # 搜索行业新闻作为数据上下文
+    # 搜索具体产品数据
     if track_key:
-        search_query = TRACKS[track_key]["search_hint"]
+        products = TRACKS[track_key]["products"]
+        news_context = search_product_data(TRACKS[track_key]["name"], products)
     elif pillar_key == "monthly_report":
-        search_query = "出海买量 数据 月报 游戏 短剧 工具 2026"
+        news_context = search_news("出海买量 数据 月报 游戏 短剧 工具 2026", num=5)
     elif pillar_key == "customer_story":
-        search_query = "出海买量 案例 优化师 素材 2026"
+        news_context = search_news("出海买量 案例 优化师 素材 2026", num=5)
     else:
-        search_query = "出海买量 优化 素材 Meta TikTok 2026"
-
-    news_context = search_news(search_query, num=5)
+        news_context = search_news("出海买量 优化 素材 Meta TikTok 2026", num=5)
 
     # 构建prompt（根据支柱类型）
     if pillar_key == "competitor":
         track_name = TRACKS[track_key]["name"]
         products = TRACKS[track_key]["products"]
-        product_hint = f"可以参考这些产品（选1-2个深入拆解）：{', '.join(products[:5])}"
-        prompt = f"""今天是{date_str}，写一篇「竞品拆解台」文章~
+        product_hint = f"从这些产品里选1-2个写：{', '.join(products[:5])}（优先选搜索结果里有新闻的）"
+        prompt = f"""今天是{date_str}，写一篇竞品拆解文章~
 
 拆解方向：出海{track_name}买量
 {product_hint}
 
-最近行业动态（供参考，可引用但不能照抄，要用你自己的话转述）：
+以下是搜索到的真实行业新闻（这是你唯一的数据来源，只能引用这些里面的数据，不能编造其他数字）：
 {news_context}
 
-文章结构（必须遵循，但自然融入叙述中，不要出现"第一步""第二步"这种生硬标记）：
+文章结构（必须遵循，但绝对不要出现小标题或分段标记，让结构自然融入叙述中）：
 {structure_text}
 
 写作要点：
-- 开头用一个具体场景引入（比如"前两天翻了下XX的数据，发现一个挺有意思的变化..."）
-- 数据要具体：说清楚是哪个产品、近30天多少广告量、多少素材量、主投哪些地区
-- 素材拆解要说清楚：什么素材类型、前3秒什么钩子、什么创意逻辑
-- 策略复盘要还原节奏：前期怎么测、中期怎么扩、后期怎么优化
-- 有你的判断和观点，不是中立报道
+- 开头用一个具体场景引入，说你在看哪个产品的什么现象
+- 如果搜索结果里有具体数据（广告量、素材量、下载量等），引用它并说"根据XX报道"
+- 如果搜索结果里没有具体数据，就写你的分析和判断，不要编数字
+- 绝对不要写"据广大大数据显示"——你没有广大大数据
+- 写你的个人判断和观点，不是中立报道
+- 有情绪：会震惊、会困惑、会兴奋
 - 句号用~，禁止emoji，禁止竞品名
-- 第一行是标题（不超过25字，口语化，像微信消息）
+- 第一行是标题（纯文字，不超过25字，口语化，不加#不加前缀）
 - 标题后空一行，然后是正文
 - 正文不低于800字
+- 正文不要出现任何小标题、不要用#号、不要用加粗
 - 结尾引导回复「{cta_keyword}」获取完整素材包
 
 直接输出，标题+正文~"""
 
     elif pillar_key == "methodology":
         topic = get_methodology_topic(date_str)
-        prompt = f"""今天是{date_str}，写一篇「方法论实战」文章~
+        prompt = f"""今天是{date_str}，写一篇方法论文章~
 
 主题：{topic}
 
-最近行业动态（供参考）：
+以下是搜索到的行业动态（可以引用里面的数据，不能编造其他数字）：
 {news_context}
 
-文章结构（必须遵循，但自然融入叙述中）：
+文章结构（必须遵循，但绝对不要出现小标题或分段标记）：
 {structure_text}
 
 写作要点：
 - 问题场景要有代入感，像在说一个你认识的优化师遇到的真实困境
-- 常见错误要说清楚为什么不行，最好举具体例子
-- 正确方法要分步骤，每步有具体操作（用自然段落描述，不要列表）
-- 数据验证必须有具体数字（比如"CPA从$12降到了$7"）
-- 有你的个人判断和建议
+- 常见错误要说清楚为什么不行，举具体例子
+- 正确方法用自然段落描述，不要列表不要编号
+- 如果搜索结果里有具体数据，引用它
+- 如果没有具体数据，写你的经验判断（"一般来讲""我观察到的规律是"），不要编精确数字
+- 绝对不要写"据广大大数据显示"
 - 句号用~，禁止emoji，禁止竞品名
-- 第一行是标题（不超过25字，口语化）
+- 第一行是标题（纯文字，不超过25字，口语化，不加#不加前缀）
 - 标题后空一行，然后是正文
 - 正文不低于800字
+- 正文不要出现任何小标题、不要用#号、不要用加粗
 - 结尾引导回复「{cta_keyword}」获取操作手册
 
 直接输出，标题+正文~"""
 
     elif pillar_key == "monthly_report":
         month_name = datetime.strptime(date_str, "%Y-%m-%d").strftime("%m月")
-        prompt = f"""今天是{date_str}，写一篇{month_name}「数据月报」文章~
+        prompt = f"""今天是{date_str}，写一篇{month_name}数据月报文章~
 
-最近行业动态（供参考）：
+以下是搜索到的行业动态（可以引用里面的数据，不能编造其他数字）：
 {news_context}
 
-文章结构（必须遵循，但自然融入叙述中）：
+文章结构（必须遵循，但绝对不要出现小标题或分段标记）：
 {structure_text}
 
 写作要点：
-- 3个核心数字开篇抓眼球（比如"游戏买量成本涨了XX%，短剧投了XX万套素材，工具App下载量涨了XX%"）
-- 分品类要对比：游戏、短剧、工具各自的买量趋势
-- 分地区要具体：美国CPA多少、日韩CPA多少、东南亚有什么机会
-- 分平台要对比：Meta、Google、TikTok各自的表现
+- 如果搜索结果里有具体数据，引用它并标注来源
+- 如果没有具体数据，写趋势性判断（"整体来看XX在涨""XX品类投放量在增加"），不要编精确数字
+- 绝对不要写"据广大大数据显示"——你没有广大大数据
+- 可以写"从行业公开信息来看"
 - 有你的趋势预判
 - 句号用~，禁止emoji，禁止竞品名
-- 第一行是标题（不超过25字）
+- 第一行是标题（纯文字，不超过25字）
 - 标题后空一行，然后是正文
 - 正文不低于800字
+- 正文不要出现任何小标题、不要用#号、不要用加粗
 - 结尾引导回复「{cta_keyword}」下载完整报告
 
 直接输出，标题+正文~"""
 
     elif pillar_key == "customer_story":
-        prompt = f"""今天是{date_str}，写一篇「客户故事」文章~
+        prompt = f"""今天是{date_str}，写一篇客户故事文章~
 
-最近行业动态（供参考）：
+以下是搜索到的行业动态（可以引用里面的数据，不能编造其他数字）：
 {news_context}
 
-文章结构（必须遵循，但自然融入叙述中）：
+文章结构（必须遵循，但绝对不要出现小标题或分段标记）：
 {structure_text}
 
 写作要点：
 - 客户可以匿名（"某SLG团队""某短剧平台"），但遇到的问题要具体
-- 用了什么方法解决，要有具体操作步骤
-- 结果必须有数据（"素材CTR从0.8%涨到2.1%""CPA降了35%"）
-- 写成叙事，像在讲一个真实的故事，不是产品介绍
-- 可以引用客户一句话评价
+- 写成叙事，像在讲一个真实的故事
+- 如果搜索结果里有具体数据可以引用
+- 如果没有具体数据，写你的经验判断，不要编精确数字
+- 绝对不要写"据广大大数据显示"
 - 句号用~，禁止emoji，禁止竞品名
-- 第一行是标题（不超过25字，口语化）
+- 第一行是标题（纯文字，不超过25字，口语化，不加#不加前缀）
 - 标题后空一行，然后是正文
 - 正文不低于800字
+- 正文不要出现任何小标题、不要用#号、不要用加粗
 - 结尾引导回复「{cta_keyword}」获取类似案例分析
 
 直接输出，标题+正文~"""
@@ -550,8 +600,8 @@ def generate_article(pillar_key, track_key, date_str, retry=0, max_retry=3):
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": prompt},
         ],
-        temperature=0.8,
-        max_tokens=6000,
+        temperature=0.7,
+        max_tokens=8000,
     )
 
     text = resp.choices[0].message.content
@@ -585,7 +635,64 @@ def generate_article(pillar_key, track_key, date_str, retry=0, max_retry=3):
 # 封面图生成（PIL 本地）
 # ============================================================
 def generate_cover(style_key):
-    """生成封面图，返回 bytes。style_key 可以是 track_key 或 pillar_key"""
+    """使用 Pollinations.ai (免费FLUX模型) 生成封面图，返回 bytes
+    
+    按赛道/支柱选择不同风格prompt，生成与文章内容相关的配图。
+    失败时回退到PIL渐变封面。
+    """
+    cover_prompts = {
+        "game": "abstract dark gaming analytics, data visualization with red and gold accents, mobile game marketing strategy, cinematic lighting, professional, no text no watermark",
+        "tool": "clean minimalist technology app marketing concept, teal and green accents, productivity tools, digital marketing, professional, no text no watermark",
+        "drama": "cinematic short drama streaming concept, warm purple and amber tones, film reel, storytelling atmosphere, professional, no text no watermark",
+        "competitor": "abstract dark competitive analysis, data charts, red gold accents, mobile app marketing, cinematic, professional, no text no watermark",
+        "methodology": "clean instructional marketing analytics concept, teal accents, workflow optimization, professional, no text no watermark",
+        "monthly_report": "data dashboard analytics concept, purple amber tones, charts and graphs, industry report, professional, no text no watermark",
+        "customer_story": "warm business success story concept, orange tones, growth chart, professional, no text no watermark",
+    }
+
+    prompt = cover_prompts.get(style_key, cover_prompts["competitor"])
+    encoded_prompt = urllib.parse.quote(prompt)
+    # Pollinations.ai 免费图片生成，不需要API key
+    image_url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width=1792&height=1024&nologo=true&model=flux"
+
+    try:
+        log.info(f"下载封面图 (Pollinations.ai FLUX)...")
+        req = urllib.request.Request(image_url, headers={"User-Agent": "Mozilla/5.0 (compatible; ggd-bot/1.0)"})
+        with urllib.request.urlopen(req, timeout=90) as resp:
+            image_data = resp.read()
+
+        if len(image_data) < 5000:
+            raise RuntimeError(f"图片太小({len(image_data)}字节)，可能生成失败")
+
+        # 中心裁剪为 900x383
+        from PIL import Image
+        img = Image.open(BytesIO(image_data))
+        w, h = img.size
+        target_ratio = 900 / 383
+        current_ratio = w / h
+        if current_ratio > target_ratio:
+            new_w = int(h * target_ratio)
+            left = (w - new_w) // 2
+            img = img.crop((left, 0, left + new_w, h))
+        else:
+            new_h = int(w / target_ratio)
+            top = (h - new_h) // 2
+            img = img.crop((0, top, w, top + new_h))
+        img = img.resize((900, 383), Image.LANCZOS)
+
+        buf = BytesIO()
+        img.save(buf, "PNG")
+        buf.seek(0)
+        log.info(f"封面图生成完成 (Pollinations.ai, style: {style_key})")
+        return buf.getvalue()
+
+    except Exception as e:
+        log.warning(f"Pollinations.ai 失败({e})，回退到PIL渐变封面")
+        return _generate_pil_cover(style_key)
+
+
+def _generate_pil_cover(style_key):
+    """PIL渐变封面（备用方案）"""
     from PIL import Image, ImageDraw
     import random
 
@@ -645,7 +752,7 @@ def generate_cover(style_key):
     buf = BytesIO()
     img.save(buf, "PNG")
     buf.seek(0)
-    log.info(f"封面图生成完成 (style: {style_key})")
+    log.info(f"封面图生成完成 (PIL备用, style: {style_key})")
     return buf.getvalue()
 
 
@@ -712,20 +819,12 @@ def markdown_to_html(md_text, style_key):
         if not line:
             continue
 
-        line = re.sub(r'\*\*(.+?)\*\*', rf'<b style="color:{s["accent"]};">\1</b>', line)
+        # 去掉**加粗**标记（正文不使用加粗）
+        line = re.sub(r'\*\*(.+?)\*\*', r'\1', line)
 
-        if line.startswith("#"):
-            txt = line.lstrip("#").strip()
-            if len(txt) < 20 and not any(c in txt for c in "~。，；"):
-                parts.append(f"""<p style="margin:20px 0 10px 0;font-size:16px;font-weight:bold;color:#1a1a1a;">{txt}</p>""")
-            else:
-                parts.append(f"""<p style="margin:0 0 14px 0;font-size:15px;color:{s['text']};line-height:1.88;">{txt}</p>""")
-        elif line.startswith("- ") or line.startswith("—"):
-            txt = line[2:] if line.startswith("- ") else line[1:].strip()
-            txt = re.sub(r'\*\*(.+?)\*\*', rf'<b style="color:{s["accent"]};">\1</b>', txt)
-            parts.append(f"""<p style="margin:0 0 14px 0;font-size:15px;color:{s['text']};line-height:1.88;">{txt}</p>""")
-        else:
-            parts.append(f"""<p style="margin:0 0 14px 0;font-size:15px;color:{s['text']};line-height:1.88;">{line}</p>""")
+        # 所有行统一渲染为段落，不区分#标题
+        # 这确保不会出现AI模板式的bold小标题
+        parts.append(f"""<p style="margin:0 0 14px 0;font-size:15px;color:{s['text']};line-height:1.88;">{line}</p>""")
 
     parts.append(f"""<p style="margin:30px 0 10px 0;text-align:center;color:{s['accent']};font-size:14px;">想看完整买量数据？回复关键词获取更多~</p>""")
     parts.append(f"""<p style="margin:20px 0 0 0;text-align:center;color:#bbb;font-size:11px;border-top:1px solid #eee;padding-top:14px;">广大大 | 出海买量数据专家</p>""")
