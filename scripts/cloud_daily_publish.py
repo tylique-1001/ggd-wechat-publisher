@@ -2,17 +2,17 @@
 """
 云端每日发布脚本 — GitHub Actions 运行，不依赖本地机器
 
-触发：GitHub Actions cron 工作日 UTC 1:00 (北京时间 9:00)
+内容方向：对齐《广大大公众号定制化运营方案》
+- 5大内容支柱：竞品拆解台/方法论实战/数据月报/客户故事/互动参与
+- 发布频率：周二/周四（方案规定）
+- 文章结构：每个支柱有明确模板
+- 搜索真实行业新闻作为数据上下文
 
 环境变量（GitHub Secrets）：
-  SILICONFLOW_API_KEY — 硅基流动 API 密钥（国内永久免费）
+  SILICONFLOW_API_KEY — 硅基流动 API 密钥
   WEIXIN_APPID         — 广大大公众号 AppID
   WEIXIN_SECRET        — 广大大公众号 AppSecret
-
-封面图：PIL 本地生成（零外部依赖）
-
-用法：
-  python3 scripts/cloud_daily_publish.py [--date 2026-07-03]
+  FEISHU_WEBHOOK_URL   — 飞书群机器人 Webhook
 """
 
 import os
@@ -24,10 +24,10 @@ import subprocess
 import tempfile
 import re
 import time
-import struct
-import zlib
-from datetime import datetime
-from pathlib import Path
+import urllib.request
+import urllib.parse
+import xml.etree.ElementTree as ET
+from datetime import datetime, timedelta
 from io import BytesIO
 
 logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
@@ -42,26 +42,7 @@ AUTHOR = "zylon"
 
 # 硅基流动（国内，永久免费，兼容 OpenAI SDK）
 SILICONFLOW_BASE = "https://api.siliconflow.cn/v1"
-SILICONFLOW_MODEL = "Qwen/Qwen2.5-7B-Instruct"  # 永久免费，中文能力强
-
-# 赛道
-TRACKS = {
-    "game": {
-        "name": "游戏",
-        "search_hint": "2026出海手游 SLG 休闲 买量 下载量 收入 最新",
-        "data_sources": "广大大、gamelook、白鲸出海、10100.com",
-    },
-    "tool": {
-        "name": "工具",
-        "search_hint": "2026出海工具App 清理 壁纸 AI助手 买量 下载量 最新",
-        "data_sources": "广大大、白鲸出海、扬帆出海、10100.com",
-    },
-    "drama": {
-        "name": "短剧",
-        "search_hint": "2026出海短剧 AI短剧 ReelShort 买量 排行 最新",
-        "data_sources": "广大大、扬帆出海、10100.com、App Store",
-    },
-}
+SILICONFLOW_MODEL = "Qwen/Qwen2.5-7B-Instruct"
 
 # 竞品黑名单（出现=推送事故）
 BANNED_COMPETITORS = [
@@ -78,12 +59,119 @@ SAFE_SOURCES = [
     "App Store", "Google Play", "上市公司财报",
 ]
 
+# 赛道（用于封面配色和搜索方向）
+TRACKS = {
+    "game": {
+        "name": "游戏",
+        "search_hint": "出海手游 SLG 休闲 买量 素材 2026",
+        "products": ["点点互动", "4399", "米哈游", "莉莉丝", "三七互娱", "FunPlus", "IGG", "江娱互动"],
+    },
+    "tool": {
+        "name": "工具",
+        "search_hint": "出海工具App 清理 壁纸 AI助手 买量 2026",
+        "products": ["Lemon", "CapCut", "Remini", "Photoroom", "Bumble", "Bigo"],
+    },
+    "drama": {
+        "name": "短剧",
+        "search_hint": "出海短剧 ReelShort DramaBox 买量 2026",
+        "products": ["ReelShort", "DramaBox", "ShortMax", "FlexTV", "TopShort", "DramaWave"],
+    },
+}
+
+# ============================================================
+# 5大内容支柱（对齐定制方案）
+# ============================================================
+PILLARS = {
+    "competitor": {
+        "name": "竞品拆解台",
+        "description": "用广大大数据拆解一个热门出海产品的完整买量策略",
+        "structure": [
+            "开篇：用一个具体场景或发现引入，说清楚你在拆解哪个产品，最让你震惊的发现是什么",
+            "数据总览：该产品近30天广告量、素材量、投放地区分布（数据穿插在叙述中，不要列表）",
+            "素材拆解：它跑量最好的素材是什么类型？前3秒什么钩子？什么创意逻辑？为什么能跑量？",
+            "策略复盘：它的投放节奏是什么？前期怎么测素材、中期怎么扩量、后期怎么优化？",
+            "结尾：你的判断和建议，引导回复关键词获取完整素材包",
+        ],
+        "cta_keyword": "拆解",
+    },
+    "methodology": {
+        "name": "方法论实战",
+        "description": "优化师和设计师可以直接用的工作方法",
+        "structure": [
+            "问题场景：描述优化师或设计师遇到的真实困境，要有代入感",
+            "常见错误：大多数人会怎么做？为什么效果不好？",
+            "正确方法：应该怎么做？分步骤说清楚，每步都有具体操作",
+            "数据验证：用具体数字证明这个方法有效（比如CPA从多少降到多少）",
+            "结尾：引导回复关键词获取操作手册",
+        ],
+        "topics": [
+            "Meta广告素材优化：如何从测素材到扩量的完整流程",
+            "TikTok买量策略：短剧出海怎么投效果最好",
+            "素材CTR提升：前3秒钩子设计的4种方法",
+            "CPA优化：如何把获客成本从$12压到$7",
+            "RTA投放策略：什么场景下该用RTA",
+            "素材A/B测试：怎么设计测试方案才能快速找到跑量素材",
+            "投放节奏管理：什么时候该加量什么时候该收",
+            "多平台投放：Meta和TikTok的素材策略差异",
+        ],
+        "cta_keyword": "SOP",
+    },
+    "monthly_report": {
+        "name": "数据月报",
+        "description": "行业大盘风向标，建立权威感",
+        "structure": [
+            "月度关键数据速览：3个核心数字开篇抓眼球",
+            "分品类趋势：游戏、短剧、工具的买量趋势对比",
+            "分地区差异：美国、日韩、东南亚市场的投放成本和效果对比",
+            "分平台效能：Meta、Google、TikTok的投放表现对比",
+            "结尾：下月趋势预判，引导回复「月报」下载完整报告",
+        ],
+        "cta_keyword": "月报",
+    },
+    "customer_story": {
+        "name": "客户故事",
+        "description": "用真实的客户案例证明工具价值",
+        "structure": [
+            "客户遇到了什么问题（可以匿名，但问题描述要具体）",
+            "他们用了什么方法或工具来解决",
+            "结果是什么（必须有具体数据：提升X%、节省X万、效率翻X倍）",
+            "客户评价（可以匿名引用一句话）",
+            "结尾：引导回复关键词获取类似案例分析",
+        ],
+        "cta_keyword": "案例",
+    },
+}
+
 
 def check_no_competitor(text):
     for banned in BANNED_COMPETITORS:
         if banned.lower() in text.lower():
             return False, banned
     return True, None
+
+
+# ============================================================
+# 搜索真实行业新闻（给AI提供数据上下文）
+# ============================================================
+def search_news(query, num=5):
+    """通过Google News RSS搜索最近新闻，返回标题列表"""
+    try:
+        url = f"https://news.google.com/rss/search?q={urllib.parse.quote(query)}&hl=zh-CN&gl=CN&ceid=CN:zh-Hans"
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (compatible; ggd-bot/1.0)"})
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            xml_data = resp.read()
+        root = ET.fromstring(xml_data)
+        items = root.findall(".//item")[:num]
+        results = []
+        for item in items:
+            title = item.findtext("title", "").strip()
+            if title:
+                results.append(f"- {title}")
+        log.info(f"🔍 搜索「{query[:20]}...」获取到 {len(results)} 条新闻")
+        return "\n".join(results) if results else ""
+    except Exception as e:
+        log.warning(f"[WARN] 搜索失败（不影响生成）: {e}")
+        return ""
 
 
 # ============================================================
@@ -95,7 +183,7 @@ def wechat_get_token():
     data = json.loads(r.stdout)
     if data.get("errcode", 0) != 0:
         raise RuntimeError(f"Token 失败: {data.get('errmsg')}")
-    log.info(f"✅ Token OK")
+    log.info(f"Token OK")
     return data["access_token"]
 
 
@@ -110,7 +198,7 @@ def wechat_upload_cover(token, image_path):
     if not mid:
         log.warning(f"封面上传失败: {data}")
         return None
-    log.info(f"✅ 封面: {mid}")
+    log.info(f"封面: {mid}")
     return mid
 
 
@@ -138,7 +226,7 @@ def wechat_create_draft(token, title, digest, html, thumb_id=None):
 
 
 # ============================================================
-# 硅基流动 文本生成（国内，永久免费）
+# 硅基流动 文本生成
 # ============================================================
 def get_siliconflow_client():
     from openai import OpenAI
@@ -148,42 +236,44 @@ def get_siliconflow_client():
     return OpenAI(api_key=key, base_url=SILICONFLOW_BASE)
 
 
-SYSTEM_PROMPT = f"""你是在出海买量行业干了多年的人，在广大大(SocialPeta)公众号写文章~
+# ============================================================
+# SYSTEM_PROMPT（对齐定制方案的写作风格）
+# ============================================================
+SYSTEM_PROMPT = f"""你是广大大(SocialPeta)公众号的资深编辑，在出海买量行业干了多年~
 
-你不是在写报告，是在跟朋友聊天分享你看到的东西~
-
-核心人设（非常重要）：
-- 有主观判断，会说"我觉得""说实话""不太看好""这个挺有意思""有点离谱"
-- 会跑题、会吐槽、会说不确定的话（"大概""可能""我记得好像是"）
-- 句子长短不一，有时一句话就几个字，有时一大段
-- 不会面面俱到，只聊自己觉得值得聊的
-- 有情绪：会兴奋、会困惑、会不屑
+你写文章的风格（重要，必须遵循）：
+- 像跟同行吃饭时聊起一个案例：有故事、有数据、有观点、有建议
+- 不是在写报告，是在分享你看到的行业现象和你的判断
+- 用具体的产品名、具体的数据、具体的场景，不要泛泛而谈
+- 有情绪和态度：会震惊、会困惑、会兴奋、会吐槽
+- 给读者可落地的行动建议，不是空谈理论
+- 像方案里的范文那样：开头用一个真实场景引入，中间用数据说话，结尾给行动建议
 
 写作铁律（违反=废稿）：
 1. 句号用~代替（不用。！）
-2. 禁止任何框架：不要开头铺垫/不要结尾总结/不要"首先其次最后/接下来/随着/近年来/在当今"
-3. 禁止AI词汇：此外/值得注意的是/毋庸置疑/由此可见/总的来说/综上所述/不难发现/不难看出/可以说
-4. 禁止破折号——/禁止"不仅而且"/禁止硬凑三点
-5. 正文禁止emoji
-6. 不低于800字
-7. 只用自然段落，不要列表/编号/表格/加粗标题/引用块
-8. 数据穿插在叙述里，不要单独列出来
-9. 开头直接说事，不要铺垫背景
-10. 每篇结尾引导回复关键词获取资料
+2. 禁止AI套话：随着/近年来/在当今/首先/其次/最后/此外/值得注意的是/综上所述/总的来说/不难发现/可以看出
+3. 禁止破折号——/禁止"不仅而且"/禁止硬凑三点
+4. 正文禁止emoji
+5. 不低于800字
+6. 数据要具体：说清楚是哪个产品、多少广告量、多少素材量、什么地区
+7. 每篇结尾引导回复关键词获取资料
+8. 只用自然段落写作，不要列表/编号/表格/加粗标题
+9. 数据穿插在叙述里，不要单独列出来
+10. 开头直接说事，不要铺垫背景
 
-标题铁律（非常重要）：
-- 禁止用这些套路：XX%、暴涨、飙升、头部玩家、月入XX万、XX万美元、还在XX就是XX
-- 标题要像朋友发你的微信消息，不像新闻标题
-- 可以用问句、感叹句、口语化的表达
+标题要求：
+- 像朋友发你的微信消息，不像新闻标题
+- 可以用问句、感叹句、口语化表达
 - 不超过25字
+- 禁止套路：XX%/暴涨/飙升/头部玩家/月入XX万/XX万美元/还在XX就是XX
 - 不要用"|"分隔符
 
 数据规则：
 - 数据来源只能用：{', '.join(SAFE_SOURCES)}
-- 不确定就写范围或趋势，不要编精确数字
-- 数据是辅助，观点才是主体
+- 不确定就写范围或趋势（"大概""可能""我记得好像是"），不要编精确数字
+- 数据是文章的核心，不是辅助
 
-竞品黑名单（绝对禁止）：
+竞品黑名单（绝对禁止出现）：
 {', '.join(BANNED_COMPETITORS)}
 
 输出格式：
@@ -193,36 +283,34 @@ SYSTEM_PROMPT = f"""你是在出海买量行业干了多年的人，在广大大
 不要加任何格式标记（如**加粗**、#### 标题等）"""
 
 
+# ============================================================
+# 内容清洗和质量检查
+# ============================================================
 def clean_ai_content(text):
-    """清洗AI生成的内容，去除对话标记、AI套话、乱码行"""
+    """清洗AI生成的内容"""
     if not text:
         return ""
-    
-    # 1. 逐行处理：去除对话标记和角色标签行
+
     dialogue_markers = ["user", "assistant", "system", "human", "请拆解", "请重新生成", "请修改", "/Dk", "Dk", "**1", "—**"]
     lines = text.split("\n")
     cleaned_lines = []
     for line in lines:
         stripped = line.strip()
-        # 跳过纯对话标记行
         if stripped.lower() in ("user", "assistant", "system", "human"):
             continue
         if stripped in ("1", "2", "3"):
             continue
-        # 跳过看起来是乱码的短行（只有A、*、数字等）
         if re.match(r'^[A-Za-z\*\s\-/]+$', stripped) and len(stripped) <= 10:
             continue
-        # 跳过包含对话指令的行（如果整行都很短）
         if any(marker in stripped for marker in dialogue_markers) and len(stripped) < 30:
             continue
         cleaned_lines.append(line)
-    
+
     text = "\n".join(cleaned_lines)
-    
-    # 2. 逐行去除AI套话（用 replace，比正则更可靠）
+
     ai_openers = [
-        "随着", "近年来", "在当今", "首先", "其次", "最后", 
-        "综上所述", "总的来说", "值得注意的是", "不难发现", 
+        "随着", "近年来", "在当今", "首先", "其次", "最后",
+        "综上所述", "总的来说", "值得注意的是", "不难发现",
         "可以看出", "众所周知", "接下来", "请拆解", "请分析", "请重新生成",
     ]
     lines = text.split("\n")
@@ -230,96 +318,80 @@ def clean_ai_content(text):
     for line in lines:
         for opener in ai_openers:
             line = line.replace(opener, "")
-        # 去除开头的逗号、句号、空格
         line = line.lstrip("，,.。~ ")
         if line.strip():
             cleaned_lines.append(line)
     text = "\n".join(cleaned_lines)
-    
-    # 3. 去除末尾不完整的"据数据显示~数字"（逐行检查）
-    lines = text.split("\n")
-    cleaned_lines = []
-    for line in lines:
-        if re.search(r'据数据显示~\d+$', line.strip()):
-            # 去掉末尾的"据数据显示~数字"
-            line = re.sub(r'据数据显示~\d+$', '', line.strip()).strip()
-        if line.strip():
-            cleaned_lines.append(line)
-    text = "\n".join(cleaned_lines)
-    
-    # 4. 去除多余的 "~" 符号（连续多个）
+
     text = re.sub(r'~{2,}', '~', text)
     text = re.sub(r'~\s*~', '~', text)
-    
-    # 5. 去除多余空行
     text = re.sub(r'\n{3,}', '\n\n', text).strip()
-    
     return text
 
 
 def check_content_quality(text):
-    """检查内容质量，返回 (is_ok, reason)"""
+    """检查内容质量"""
     if not text or len(text) < 300:
-        return False, f"内容太短({len(text)}字)，需要重新生成"
-    
-    # 检查是否包含对话标记
+        return False, f"内容太短({len(text)}字)"
     dialogue_words = ["user", "assistant", "system", "请拆解", "请重新生成", "请分析"]
     for word in dialogue_words:
         if word.lower() in text.lower():
-            return False, f"包含对话标记'{word}'，需要重新生成"
-    
-    # 检查乱码率（非中文字符/数字/英文/标点占比过高）
+            return False, f"包含对话标记'{word}'"
     chinese_chars = len(re.findall(r'[\u4e00-\u9fff]', text))
     total_chars = len(text)
     if total_chars > 0 and chinese_chars / total_chars < 0.3:
-        return False, "中文内容比例过低，疑似乱码，需要重新生成"
-    
-    # 检查是否有大量重复短行（如 "A A"）
+        return False, "中文比例过低"
     weird_lines = [l for l in text.split("\n") if re.match(r'^[A-Z\*\s\-/]{1,10}$', l.strip())]
     if len(weird_lines) > 3:
-        return False, "包含过多乱码行，需要重新生成"
-    
+        return False, "包含过多乱码行"
     return True, ""
 
 
-def get_daily_track(date_str):
-    """根据日期确定今天写哪个赛道（每日1篇，按星期轮换）"""
+# ============================================================
+# 内容支柱调度（对齐方案：周二/四发布）
+# ============================================================
+def get_daily_pillar(date_str):
+    """根据日期确定今天的内容支柱和赛道
+    
+    方案规定：
+    - 周二：竞品拆解台（默认），每月最后一个周二=数据月报
+    - 周四：方法论实战（默认），每月第二/四周四=客户故事
+    - 其他日期不发布
+    """
     dt = datetime.strptime(date_str, "%Y-%m-%d")
-    weekday = dt.weekday()  # 0=Monday
-    # 周一: game, 周二: tool, 周三: drama, 周四: game, 周五: tool
-    rotation = ["game", "tool", "drama", "game", "tool", "drama", "drama"]
-    return rotation[weekday]
+    weekday = dt.weekday()  # 0=Monday, 1=Tuesday, 3=Thursday
+
+    if weekday == 1:  # Tuesday
+        # 检查是否是本月最后一个周二
+        next_week = dt + timedelta(days=7)
+        if next_week.month != dt.month:
+            return "monthly_report", None
+        return "competitor", get_track_rotation(date_str)
+
+    if weekday == 3:  # Thursday
+        week_of_month = (dt.day - 1) // 7 + 1
+        if week_of_month in (2, 4):
+            return "customer_story", None
+        return "methodology", None
+
+    return None, None
 
 
-def get_daily_angle(track_key, date_str):
-    """根据日期获取当天的写作角度，确保同赛道文章不重复"""
-    angles = {
-        "game": [
-            "挑一款你觉得买量策略最有意思的手游，分析它为什么这么做，你觉得聪明在哪",
-            "聊聊某个游戏品类最近的买量变化，你觉得背后的逻辑是什么",
-            "对比你观察到的两款同品类游戏，它们的买量打法有什么不同",
-            "说一个你觉得买量策略有问题的游戏，哪里有问题，你会怎么改",
-            "聊聊最近手游买量素材的变化趋势，什么素材类型在涨什么在跌",
-        ],
-        "tool": [
-            "挑一个工具App聊聊它的增长策略，你觉得聪明在哪或者蠢在哪",
-            "工具出海这个品类最近有什么变化让你觉得值得说",
-            "吐槽一个工具App的买量操作，你觉得哪里做得不对",
-            "聊聊工具App买量和游戏买量的本质区别，为什么策略不一样",
-            "说一个你觉得被低估的工具品类，为什么觉得它有机会",
-        ],
-        "drama": [
-            "聊一部你觉得推广做得好的短剧，分析它的素材策略",
-            "短剧买量最近有什么新打法让你注意到了",
-            "对比两个短剧平台的策略差异，你更看好谁",
-            "说一部你觉得买量砸钱但效果一般的短剧，为什么觉得效果一般",
-            "聊聊短剧出海不同市场的差异，哪个市场你觉得有机会",
-        ],
-    }
-    track_angles = angles.get(track_key, angles["game"])
+def get_track_rotation(date_str):
+    """在竞品拆解台中轮换赛道（游戏/工具/短剧）"""
     dt = datetime.strptime(date_str, "%Y-%m-%d")
-    idx = dt.timetuple().tm_yday % len(track_angles)
-    return track_angles[idx]
+    tracks = ["game", "tool", "drama"]
+    # 用周数轮换
+    week_num = dt.isocalendar()[1]
+    return tracks[week_num % 3]
+
+
+def get_methodology_topic(date_str):
+    """轮换方法论主题"""
+    dt = datetime.strptime(date_str, "%Y-%m-%d")
+    topics = PILLARS["methodology"]["topics"]
+    idx = dt.timetuple().tm_yday % len(topics)
+    return topics[idx]
 
 
 # 标题反模式检测
@@ -331,7 +403,6 @@ TITLE_BANNED_REGEX = [re.compile(p, re.IGNORECASE) for p in TITLE_BANNED_PATTERN
 
 
 def check_title_quality(title):
-    """检查标题是否符合要求，返回 (is_ok, reason)"""
     if not title or len(title) < 5:
         return False, "标题太短"
     if len(title) > 30:
@@ -342,28 +413,132 @@ def check_title_quality(title):
     return True, ""
 
 
-def generate_article(track_key, date_str, retry=0, max_retry=3):
-    track = TRACKS[track_key]
-    angle = get_daily_angle(track_key, date_str)
+# ============================================================
+# 文章生成（对齐5大内容支柱）
+# ============================================================
+def generate_article(pillar_key, track_key, date_str, retry=0, max_retry=3):
+    pillar = PILLARS[pillar_key]
+    structure_text = "\n".join(f"{i+1}. {s}" for i, s in enumerate(pillar["structure"]))
+    cta_keyword = pillar.get("cta_keyword", "资料")
 
-    prompt = f"""今天是{date_str}，写一篇出海{track['name']}相关的文章~
+    # 搜索行业新闻作为数据上下文
+    if track_key:
+        search_query = TRACKS[track_key]["search_hint"]
+    elif pillar_key == "monthly_report":
+        search_query = "出海买量 数据 月报 游戏 短剧 工具 2026"
+    elif pillar_key == "customer_story":
+        search_query = "出海买量 案例 优化师 素材 2026"
+    else:
+        search_query = "出海买量 优化 素材 Meta TikTok 2026"
 
-今天聊的角度：{angle}
+    news_context = search_news(search_query, num=5)
 
-要求：
-1. 有你自己的判断和观点，不要面面俱到
-2. 像和朋友聊天一样写，可以跑题、可以吐槽、可以说不确定的话
-3. 如果提到数据，穿插在叙述里，不要单独列出来
-4. 句号用~，禁止emoji，禁止竞品名
-5. 第一行是标题（不超过25字，禁止用"XX%""暴涨""头部玩家""月入XX万"等套路）
-6. 标题后空一行，然后是正文
-7. 正文不低于800字
-8. 只输出纯文本段落，不要加粗、不要列表、不要编号
-9. 结尾引导回复关键词获取资料
+    # 构建prompt（根据支柱类型）
+    if pillar_key == "competitor":
+        track_name = TRACKS[track_key]["name"]
+        products = TRACKS[track_key]["products"]
+        product_hint = f"可以参考这些产品（选1-2个深入拆解）：{', '.join(products[:5])}"
+        prompt = f"""今天是{date_str}，写一篇「竞品拆解台」文章~
+
+拆解方向：出海{track_name}买量
+{product_hint}
+
+最近行业动态（供参考，可引用但不能照抄，要用你自己的话转述）：
+{news_context}
+
+文章结构（必须遵循，但自然融入叙述中，不要出现"第一步""第二步"这种生硬标记）：
+{structure_text}
+
+写作要点：
+- 开头用一个具体场景引入（比如"前两天翻了下XX的数据，发现一个挺有意思的变化..."）
+- 数据要具体：说清楚是哪个产品、近30天多少广告量、多少素材量、主投哪些地区
+- 素材拆解要说清楚：什么素材类型、前3秒什么钩子、什么创意逻辑
+- 策略复盘要还原节奏：前期怎么测、中期怎么扩、后期怎么优化
+- 有你的判断和观点，不是中立报道
+- 句号用~，禁止emoji，禁止竞品名
+- 第一行是标题（不超过25字，口语化，像微信消息）
+- 标题后空一行，然后是正文
+- 正文不低于800字
+- 结尾引导回复「{cta_keyword}」获取完整素材包
 
 直接输出，标题+正文~"""
 
-    log.info(f"🤖 生成 {track['name']} (角度: {angle[:30]}...)")
+    elif pillar_key == "methodology":
+        topic = get_methodology_topic(date_str)
+        prompt = f"""今天是{date_str}，写一篇「方法论实战」文章~
+
+主题：{topic}
+
+最近行业动态（供参考）：
+{news_context}
+
+文章结构（必须遵循，但自然融入叙述中）：
+{structure_text}
+
+写作要点：
+- 问题场景要有代入感，像在说一个你认识的优化师遇到的真实困境
+- 常见错误要说清楚为什么不行，最好举具体例子
+- 正确方法要分步骤，每步有具体操作（用自然段落描述，不要列表）
+- 数据验证必须有具体数字（比如"CPA从$12降到了$7"）
+- 有你的个人判断和建议
+- 句号用~，禁止emoji，禁止竞品名
+- 第一行是标题（不超过25字，口语化）
+- 标题后空一行，然后是正文
+- 正文不低于800字
+- 结尾引导回复「{cta_keyword}」获取操作手册
+
+直接输出，标题+正文~"""
+
+    elif pillar_key == "monthly_report":
+        month_name = datetime.strptime(date_str, "%Y-%m-%d").strftime("%m月")
+        prompt = f"""今天是{date_str}，写一篇{month_name}「数据月报」文章~
+
+最近行业动态（供参考）：
+{news_context}
+
+文章结构（必须遵循，但自然融入叙述中）：
+{structure_text}
+
+写作要点：
+- 3个核心数字开篇抓眼球（比如"游戏买量成本涨了XX%，短剧投了XX万套素材，工具App下载量涨了XX%"）
+- 分品类要对比：游戏、短剧、工具各自的买量趋势
+- 分地区要具体：美国CPA多少、日韩CPA多少、东南亚有什么机会
+- 分平台要对比：Meta、Google、TikTok各自的表现
+- 有你的趋势预判
+- 句号用~，禁止emoji，禁止竞品名
+- 第一行是标题（不超过25字）
+- 标题后空一行，然后是正文
+- 正文不低于800字
+- 结尾引导回复「{cta_keyword}」下载完整报告
+
+直接输出，标题+正文~"""
+
+    elif pillar_key == "customer_story":
+        prompt = f"""今天是{date_str}，写一篇「客户故事」文章~
+
+最近行业动态（供参考）：
+{news_context}
+
+文章结构（必须遵循，但自然融入叙述中）：
+{structure_text}
+
+写作要点：
+- 客户可以匿名（"某SLG团队""某短剧平台"），但遇到的问题要具体
+- 用了什么方法解决，要有具体操作步骤
+- 结果必须有数据（"素材CTR从0.8%涨到2.1%""CPA降了35%"）
+- 写成叙事，像在讲一个真实的故事，不是产品介绍
+- 可以引用客户一句话评价
+- 句号用~，禁止emoji，禁止竞品名
+- 第一行是标题（不超过25字，口语化）
+- 标题后空一行，然后是正文
+- 正文不低于800字
+- 结尾引导回复「{cta_keyword}」获取类似案例分析
+
+直接输出，标题+正文~"""
+    else:
+        prompt = f"写一篇出海买量相关文章~\n结构：{structure_text}\n句号用~，第一行标题~"
+
+    log.info(f"生成 {pillar['name']}..." + (f" 赛道: {TRACKS[track_key]['name']}" if track_key else ""))
 
     client = get_siliconflow_client()
 
@@ -373,163 +548,138 @@ def generate_article(track_key, date_str, retry=0, max_retry=3):
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": prompt},
         ],
-        temperature=0.85,
+        temperature=0.8,
         max_tokens=6000,
     )
 
     text = resp.choices[0].message.content
-
-    # 清洗AI内容
     text = clean_ai_content(text)
 
     # 质量检查
     ok, reason = check_content_quality(text)
     if not ok:
-        log.error(f"❌ 内容质量不通过: {reason}，重试({retry+1}/{max_retry})...")
+        log.error(f"内容质量不通过: {reason}，重试({retry+1}/{max_retry})...")
         if retry < max_retry:
-            return generate_article(track_key, date_str, retry=retry+1, max_retry=max_retry)
+            return generate_article(pillar_key, track_key, date_str, retry=retry+1, max_retry=max_retry)
         else:
-            log.error(f"❌ 重试耗尽，使用备用内容")
-            return f"{track['name']}出海买量观察\n\n今天先聊到这里，数据更新中~回复「买量」获取最新数据~"
+            log.error(f"重试耗尽，使用备用内容")
+            return f"{pillar['name']}观察\n\n今天先聊到这里，数据更新中~回复「{cta_keyword}」获取资料~"
 
     # 检查竞品
     clean_check, banned = check_no_competitor(text)
     if not clean_check:
-        log.error(f"❌ 发现竞品: {banned}，重新生成...")
+        log.error(f"发现竞品: {banned}，重新生成...")
         if retry < max_retry:
-            return generate_article(track_key, date_str, retry=retry+1, max_retry=max_retry)
+            return generate_article(pillar_key, track_key, date_str, retry=retry+1, max_retry=max_retry)
         else:
             text = text.replace(banned, "某平台")
-            log.warning(f"⚠️ 手动替换竞品名: {banned} -> 某平台")
+            log.warning(f"手动替换竞品名: {banned} -> 某平台")
 
-    log.info(f"✅ {track['name']} {len(text)}字")
+    log.info(f"{pillar['name']} {len(text)}字")
     return text
 
 
 # ============================================================
-# 封面图生成（PIL 本地 — 零外部依赖）
+# 封面图生成（PIL 本地）
 # ============================================================
-def generate_covers(track_key=None):
-    """生成封面图，返回 {track_key: bytes}。传入 track_key 只生成1张"""
+def generate_cover(style_key):
+    """生成封面图，返回 bytes。style_key 可以是 track_key 或 pillar_key"""
     from PIL import Image, ImageDraw
+    import random
 
     configs = {
-        "game": {
-            "colors": [(26, 26, 46), (22, 33, 62)],
-            "accent": (220, 38, 38),
-            "accent2": (251, 191, 36),
-            "shapes": "grid",
-        },
-        "tool": {
-            "colors": [(240, 253, 244), (255, 255, 255)],
-            "accent": (13, 148, 136),
-            "accent2": (20, 184, 166),
-            "shapes": "circles",
-        },
-        "drama": {
-            "colors": [(250, 249, 247), (254, 243, 199)],
-            "accent": (124, 58, 237),
-            "accent2": (245, 158, 11),
-            "shapes": "waves",
-        },
+        "game": {"colors": [(26, 26, 46), (22, 33, 62)], "accent": (220, 38, 38), "accent2": (251, 191, 36), "shapes": "grid"},
+        "tool": {"colors": [(240, 253, 244), (255, 255, 255)], "accent": (13, 148, 136), "accent2": (20, 184, 166), "shapes": "circles"},
+        "drama": {"colors": [(250, 249, 247), (254, 243, 199)], "accent": (124, 58, 237), "accent2": (245, 158, 11), "shapes": "waves"},
+        "competitor": {"colors": [(26, 26, 46), (22, 33, 62)], "accent": (220, 38, 38), "accent2": (251, 191, 36), "shapes": "grid"},
+        "methodology": {"colors": [(240, 253, 244), (255, 255, 255)], "accent": (13, 148, 136), "accent2": (20, 184, 166), "shapes": "circles"},
+        "monthly_report": {"colors": [(250, 249, 247), (254, 243, 199)], "accent": (124, 58, 237), "accent2": (245, 158, 11), "shapes": "waves"},
+        "customer_story": {"colors": [(255, 247, 237), (255, 255, 255)], "accent": (194, 65, 12), "accent2": (234, 88, 12), "shapes": "circles"},
     }
 
-    # 只生成指定赛道的封面
-    keys = [track_key] if track_key else list(configs.keys())
-    covers = {}
+    cfg = configs.get(style_key, configs["competitor"])
+    w, h = 900, 383
+    img = Image.new("RGB", (w, h), cfg["colors"][0])
 
-    for tk in keys:
-        cfg = configs[tk]
-        w, h = 900, 383
-        img = Image.new("RGB", (w, h), cfg["colors"][0])
+    c1, c2 = cfg["colors"]
+    for y in range(h):
+        ratio = y / h
+        r = int(c1[0] + (c2[0] - c1[0]) * ratio)
+        g = int(c1[1] + (c2[1] - c1[1]) * ratio)
+        b = int(c1[2] + (c2[2] - c1[2]) * ratio)
+        for x in range(w):
+            img.putpixel((x, y), (r, g, b))
 
-        c1 = cfg["colors"][0]
-        c2 = cfg["colors"][1]
-        for y in range(h):
-            ratio = y / h
-            r = int(c1[0] + (c2[0] - c1[0]) * ratio)
-            g = int(c1[1] + (c2[1] - c1[1]) * ratio)
-            b = int(c1[2] + (c2[2] - c1[2]) * ratio)
-            for x in range(w):
-                img.putpixel((x, y), (r, g, b))
+    draw = ImageDraw.Draw(img)
+    random.seed(hash(style_key + str(datetime.now().day)) % 10000)
 
-        draw = ImageDraw.Draw(img)
+    if cfg["shapes"] == "grid":
+        for i in range(3):
+            x1 = random.randint(50, 250)
+            x2 = random.randint(650, 850)
+            y = random.randint(80, 300)
+            draw.line([(x1, y), (x2, y)], fill=cfg["accent2"], width=1)
+        for i in range(4):
+            rx = random.randint(100, 800)
+            ry = random.randint(60, 320)
+            draw.rectangle([rx, ry, rx + random.randint(30, 80), ry + random.randint(10, 20)],
+                           outline=cfg["accent"], width=1)
+    elif cfg["shapes"] == "circles":
+        for i in range(6):
+            cx = random.randint(80, 820)
+            cy = random.randint(60, 320)
+            r = random.randint(15, 45)
+            draw.ellipse([cx - r, cy - r, cx + r, cy + r], outline=cfg["accent"], width=1)
+    else:
+        for i in range(5):
+            y_base = 100 + i * 55
+            points = []
+            for x in range(0, w, 10):
+                y_off = int(18 * (1 if i % 2 == 0 else -1) * (1 if x % 40 < 20 else -1) * 0.6)
+                points.append((x, y_base + y_off))
+            for j in range(len(points) - 1):
+                draw.line([points[j], points[j + 1]], fill=cfg["accent2"], width=1)
 
-        import random
-        random.seed(hash(tk + str(datetime.now().day)) % 10000)
-
-        if cfg["shapes"] == "grid":
-            for i in range(3):
-                x1 = random.randint(50, 250)
-                x2 = random.randint(650, 850)
-                y = random.randint(80, 300)
-                draw.line([(x1, y), (x2, y)], fill=cfg["accent2"], width=1)
-            for i in range(4):
-                rx = random.randint(100, 800)
-                ry = random.randint(60, 320)
-                draw.rectangle([rx, ry, rx + random.randint(30, 80), ry + random.randint(10, 20)],
-                               outline=cfg["accent"], width=1)
-        elif cfg["shapes"] == "circles":
-            for i in range(6):
-                cx = random.randint(80, 820)
-                cy = random.randint(60, 320)
-                r = random.randint(15, 45)
-                draw.ellipse([cx - r, cy - r, cx + r, cy + r], outline=cfg["accent"], width=1)
-        else:  # waves
-            for i in range(5):
-                y_base = 100 + i * 55
-                points = []
-                for x in range(0, w, 10):
-                    y_off = int(18 * (1 if i % 2 == 0 else -1) * (1 if x % 40 < 20 else -1) * 0.6)
-                    points.append((x, y_base + y_off))
-                for j in range(len(points) - 1):
-                    draw.line([points[j], points[j + 1]], fill=cfg["accent2"], width=1)
-
-        buf = BytesIO()
-        img.save(buf, "PNG")
-        buf.seek(0)
-        covers[tk] = buf.getvalue()
-
-    log.info(f"🎨 封面图生成完成 ({len(covers)}张)")
-    return covers
+    buf = BytesIO()
+    img.save(buf, "PNG")
+    buf.seek(0)
+    log.info(f"封面图生成完成 (style: {style_key})")
+    return buf.getvalue()
 
 
 # ============================================================
 # HTML 排版
 # ============================================================
-def markdown_to_html(md_text, track_key):
-    """将 AI 生成的 Markdown 文本转换为微信兼容的 HTML
+def markdown_to_html(md_text, style_key):
+    """将文本转换为微信兼容的 HTML
     
-    排版铁律：不能让人看出来是AI写的。
-    用最简单的 HTML：纯段落 + 少量加粗，
-    禁止 table / 进度条 / 卡片 / 渐变 / flexbox / grid / 列表 / 编号
+    排版原则：简洁自然，不像AI模板
     """
     styles = {
         "game": {"bg": "#ffffff", "text": "#2d2d2d", "accent": "#c0392b"},
         "tool": {"bg": "#ffffff", "text": "#2d2d2d", "accent": "#0d9488"},
         "drama": {"bg": "#ffffff", "text": "#2d2d2d", "accent": "#d97706"},
+        "competitor": {"bg": "#ffffff", "text": "#2d2d2d", "accent": "#c0392b"},
+        "methodology": {"bg": "#ffffff", "text": "#2d2d2d", "accent": "#0d9488"},
+        "monthly_report": {"bg": "#ffffff", "text": "#2d2d2d", "accent": "#d97706"},
+        "customer_story": {"bg": "#ffffff", "text": "#2d2d2d", "accent": "#c2410c"},
     }
-    s = styles.get(track_key, styles["tool"])
+    s = styles.get(style_key, styles["competitor"])
 
     parts = [f"""<section style="padding:12px 10px;font-size:15px;line-height:1.88;color:{s['text']};word-break:break-all;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;background:{s['bg']};">"""]
     parts.append(f"""<p style="text-align:center;margin-bottom:20px;color:#999;font-size:12px;">点击上方蓝字关注，每周解锁出海买量新玩法~</p>""")
 
-    # AI套话过滤列表（行级别）
     ai_filler_lines = [
         "首先", "其次", "最后", "综上所述", "总的来说", "值得注意的是",
         "不难发现", "可以看出", "众所周知", "随着", "近年来", "在当今",
-        "接下来", "综上所述", "请拆解", "请分析", "请重新生成",
+        "接下来", "请拆解", "请分析", "请重新生成",
         "user", "assistant", "system", "human", "1", "2", "3",
     ]
-    
-    # 乱码行模式
+
     garbage_patterns = [
-        r'^\s*A\s+A\s*$',
-        r'^\s*A\s+AA\s*$',
-        r'^\s*[\*\-/]+\s*\d+\s*$',
-        r'^\s*[\*\-/]+\s*$',
-        r'^\s*\d+\s*$',
-        r'^\s*[/\D]k\w+\s*$',
+        r'^\s*A\s+A\s*$', r'^\s*A\s+AA\s*$',
+        r'^\s*[\*\-/]+\s*\d+\s*$', r'^\s*[\*\-/]+\s*$',
+        r'^\s*\d+\s*$', r'^\s*[/\D]k\w+\s*$',
     ]
 
     for line in md_text.strip().split("\n"):
@@ -537,14 +687,12 @@ def markdown_to_html(md_text, track_key):
         if not line:
             continue
 
-        # 跳过对话标记行和AI套话行
         line_lower = line.lower()
         if line_lower in ("user", "assistant", "system", "human"):
             continue
         if line in ("1", "2", "3"):
             continue
-        
-        # 跳过纯乱码行
+
         is_garbage = False
         for pat in garbage_patterns:
             if re.match(pat, line, re.IGNORECASE):
@@ -552,23 +700,18 @@ def markdown_to_html(md_text, track_key):
                 break
         if is_garbage:
             continue
-        
-        # 跳过AI套话开头行（如果整行就是套话）
+
         if line_lower in ai_filler_lines or len(line) <= 3:
             continue
 
-        # 去除行内AI套话
         for filler in ["首先", "其次", "最后", "综上所述", "总的来说", "值得注意的是", "不难发现", "可以看出", "众所周知"]:
             line = line.replace(filler, "")
         line = line.strip()
         if not line:
             continue
 
-        # 处理行内 **加粗**（如果AI还用了的话）
         line = re.sub(r'\*\*(.+?)\*\*', rf'<b style="color:{s["accent"]};">\1</b>', line)
 
-        # 处理所有标题级别 → 统一为普通段落（标题本来就是AI痕迹）
-        # 但如果行很短（<20字）且没有标点，可能是真正的标题，用加粗
         if line.startswith("#"):
             txt = line.lstrip("#").strip()
             if len(txt) < 20 and not any(c in txt for c in "~。，；"):
@@ -576,13 +719,10 @@ def markdown_to_html(md_text, track_key):
             else:
                 parts.append(f"""<p style="margin:0 0 14px 0;font-size:15px;color:{s['text']};line-height:1.88;">{txt}</p>""")
         elif line.startswith("- ") or line.startswith("—"):
-            # 列表 → 转为普通段落，去掉列表符号
             txt = line[2:] if line.startswith("- ") else line[1:].strip()
-            # 去除列表内的加粗残留
             txt = re.sub(r'\*\*(.+?)\*\*', rf'<b style="color:{s["accent"]};">\1</b>', txt)
             parts.append(f"""<p style="margin:0 0 14px 0;font-size:15px;color:{s['text']};line-height:1.88;">{txt}</p>""")
         else:
-            # 普通段落
             parts.append(f"""<p style="margin:0 0 14px 0;font-size:15px;color:{s['text']};line-height:1.88;">{line}</p>""")
 
     parts.append(f"""<p style="margin:30px 0 10px 0;text-align:center;color:{s['accent']};font-size:14px;">想看完整买量数据？回复关键词获取更多~</p>""")
@@ -592,11 +732,10 @@ def markdown_to_html(md_text, track_key):
     return "\n".join(parts)
 
 
-def extract_title_digest(text, track_name, date_str):
-    """从文章中提取标题和摘要。新格式：第一行是标题，空行后是正文"""
+def extract_title_digest(text, pillar_name, date_str):
+    """从文章中提取标题和摘要。格式：第一行是标题，空行后是正文"""
     lines = text.strip().split("\n")
 
-    # 第一行是标题
     title_line = ""
     body_start = 0
     for i, line in enumerate(lines):
@@ -606,24 +745,21 @@ def extract_title_digest(text, track_name, date_str):
             body_start = i + 1
             break
 
-    # 检查标题质量
     ok, reason = check_title_quality(title_line)
     if not ok:
-        log.warning(f"⚠️ 标题问题: {reason}，使用备用标题")
-        # 如果标题不合格，从正文第一句提取
+        log.warning(f"标题问题: {reason}，使用备用标题")
         for line in lines[body_start:]:
             stripped = line.strip()
             if stripped and len(stripped) > 5:
                 title_line = stripped[:25].rstrip("~") + "~"
                 break
         else:
-            title_line = f"{track_name}出海买量观察"
+            title_line = f"{pillar_name} | {date_str}"
 
     title = title_line[:30].rstrip("~")
     if not title:
-        title = f"{track_name}出海买量观察"
+        title = f"{pillar_name} | {date_str}"
 
-    # 摘要从正文提取
     body_lines = lines[body_start:]
     body_text = " ".join(l.strip() for l in body_lines if l.strip())
     body_text = body_text.replace("~", "").strip()
@@ -633,34 +769,30 @@ def extract_title_digest(text, track_name, date_str):
 
 
 # ============================================================
-# 飞书通知（Webhook）
+# 飞书通知
 # ============================================================
 def send_feishu_webhook(results, date_str, errors=None):
-    """通过飞书群机器人 webhook 发送推送通知（每篇一行带编号）
+    """通过飞书群机器人 webhook 发送推送通知
     
-    注意：飞书webhook设置了关键词安全验证，关键词是"公众号"，
-    所有消息必须包含"公众号"才能发送成功。
+    注意：飞书webhook关键词是"公众号"，所有消息必须包含。
     """
     webhook_url = os.environ.get("FEISHU_WEBHOOK_URL", "")
     if not webhook_url:
-        log.info("[INFO] FEISHU_WEBHOOK_URL 未设置，跳过飞书通知")
+        log.info("FEISHU_WEBHOOK_URL 未设置，跳过飞书通知")
         return
-
-    import urllib.request
 
     success_list = [(k, v) for k, v in results.items()]
     fail_list = errors or []
 
-    # 飞书webhook关键词是"公众号"，每条消息必须包含
     if success_list and not fail_list:
         titles = "\n".join([f"{i+1}. {v['title']}" for i, (k, v) in enumerate(success_list)])
-        text = f"✅ 公众号推送完成({len(success_list)}篇) | {date_str}\n{titles}\n👉 前往草稿箱审核: https://mp.weixin.qq.com"
+        text = f"公众号推送完成({len(success_list)}篇) | {date_str}\n{titles}\n前往草稿箱审核: https://mp.weixin.qq.com"
     elif not success_list and fail_list:
-        text = f"⚠️ 公众号推送全部失败({len(fail_list)}篇) | {date_str}\n" + "\n".join(fail_list)
+        text = f"公众号推送全部失败({len(fail_list)}篇) | {date_str}\n" + "\n".join(fail_list)
     else:
         ok_titles = "\n".join([f"{i+1}. {v['title']}" for i, (k, v) in enumerate(success_list)])
         fail_text = "\n".join(fail_list)
-        text = f"✅ 公众号推送成功({len(success_list)}篇) | {date_str}\n{ok_titles}\n\n❌ 失败({len(fail_list)}篇):\n{fail_text}"
+        text = f"公众号推送成功({len(success_list)}篇) | {date_str}\n{ok_titles}\n\n失败({len(fail_list)}篇):\n{fail_text}"
 
     payload = json.dumps({"msg_type": "text", "content": {"text": text}}, ensure_ascii=False).encode("utf-8")
     req = urllib.request.Request(
@@ -672,17 +804,23 @@ def send_feishu_webhook(results, date_str, errors=None):
     try:
         with urllib.request.urlopen(req, timeout=10) as resp:
             body = resp.read().decode("utf-8")
-            log.info(f"✅ 飞书通知已发送: {body}")
+            log.info(f"飞书通知已发送: {body}")
     except Exception as e:
-        log.error(f"[ERROR] 飞书通知发送失败: {e}")
-def publish_track(token, track_key, date_str, cover_data, output_dir):
-    track_name = TRACKS[track_key]["name"]
-    log.info(f"\n{'='*40}\n📝 {track_name} | {date_str}\n{'='*40}")
+        log.error(f"飞书通知发送失败: {e}")
+
+
+# ============================================================
+# 发布
+# ============================================================
+def publish_article(token, pillar_key, track_key, date_str, cover_data, output_dir):
+    pillar = PILLARS[pillar_key]
+    pillar_name = pillar["name"]
+    log.info(f"\n{'='*40}\n{pillar_name} | {date_str}\n{'='*40}")
 
     # 生成文章
-    article = generate_article(track_key, date_str)
-    title, digest = extract_title_digest(article, track_name, date_str)
-    log.info(f"📌 {title}")
+    article = generate_article(pillar_key, track_key, date_str)
+    title, digest = extract_title_digest(article, pillar_name, date_str)
+    log.info(f"标题: {title}")
 
     # 去掉标题行，只保留正文
     lines = article.strip().split("\n")
@@ -693,22 +831,23 @@ def publish_track(token, track_key, date_str, cover_data, output_dir):
             break
     body_text = "\n".join(lines[body_start:]).strip()
 
-    # 保存封面
-    cover_path = os.path.join(output_dir, f"cover_{track_key}.png")
+    # 封面
+    cover_style = track_key or pillar_key
+    cover_path = os.path.join(output_dir, f"cover_{cover_style}.png")
     with open(cover_path, "wb") as f:
         f.write(cover_data)
 
     # HTML
-    html = markdown_to_html(body_text, track_key)
+    html = markdown_to_html(body_text, cover_style)
 
     clean, banned = check_no_competitor(html)
     if not clean:
-        log.error(f"❌ HTML中还有竞品: {banned}，跳过")
+        log.error(f"HTML中还有竞品: {banned}，跳过")
         return None, None
 
     # 保存文件
-    html_path = os.path.join(output_dir, f"draft_{track_key}.html")
-    md_path = os.path.join(output_dir, f"draft_{track_key}.md")
+    html_path = os.path.join(output_dir, f"draft_{pillar_key}.html")
+    md_path = os.path.join(output_dir, f"draft_{pillar_key}.md")
     with open(html_path, "w", encoding="utf-8") as f:
         f.write(html)
     with open(md_path, "w", encoding="utf-8") as f:
@@ -718,20 +857,19 @@ def publish_track(token, track_key, date_str, cover_data, output_dir):
     thumb_id = wechat_upload_cover(token, cover_path)
     html_clean = re.sub(r">\s+<", "><", html.replace("\n", " ").strip())
     draft_id = wechat_create_draft(token, title, digest, html_clean, thumb_id)
-    log.info(f"✅ 草稿ID: {draft_id}")
+    log.info(f"草稿ID: {draft_id}")
 
     return draft_id, {"title": title, "digest": digest}
 
 
 def already_published_today(date_str):
-    """检查今天是否已经有成功的 workflow 运行（防重复推送）"""
+    """检查今天是否已经有成功的 workflow 运行"""
     gh_token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN", "")
     if not gh_token:
-        log.info("[INFO] 无 GH_TOKEN，跳过去重检查")
+        log.info("无 GH_TOKEN，跳过去重检查")
         return False
 
     try:
-        import urllib.request
         url = (
             f"https://api.github.com/repos/tylique-1001/ggd-wechat-publisher/actions/workflows/publish-daily.yml/runs"
             f"?status=success&created={date_str}&per_page=5"
@@ -750,14 +888,16 @@ def already_published_today(date_str):
         log.info(f"[DEDUP] {date_str} 无历史成功运行，继续执行")
         return False
     except Exception as e:
-        log.warning(f"[WARN] 去重检查失败（不影响执行）: {e}")
+        log.warning(f"去重检查失败（不影响执行）: {e}")
         return False
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--date", default=datetime.now().strftime("%Y-%m-%d"))
-    parser.add_argument("--track", choices=["game", "tool", "drama"], help="手动指定赛道（默认按日期轮换）")
+    parser.add_argument("--pillar", choices=["competitor", "methodology", "monthly_report", "customer_story"],
+                        help="手动指定内容支柱（默认按日期自动）")
+    parser.add_argument("--track", choices=["game", "tool", "drama"], help="赛道（仅竞品拆解台）")
     parser.add_argument("--output", default="/tmp/gzh_output")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--force", action="store_true", help="忽略去重检查，强制推送")
@@ -767,43 +907,52 @@ def main():
     output_dir = args.output
     os.makedirs(output_dir, exist_ok=True)
 
-    # 每日1篇，按星期轮换赛道
-    track_key = args.track or get_daily_track(date_str)
-    track_name = TRACKS[track_key]["name"]
-    angle = get_daily_angle(track_key, date_str)
+    # 确定内容支柱
+    if args.pillar:
+        pillar_key = args.pillar
+        track_key = args.track
+        if pillar_key == "competitor" and not track_key:
+            track_key = get_track_rotation(date_str)
+    else:
+        pillar_key, track_key = get_daily_pillar(date_str)
+        if pillar_key is None:
+            log.info(f"{date_str} 不是推送日（周二/周四），退出")
+            print(json.dumps({"skipped": True, "reason": "not a publishing day", "date": date_str}))
+            return
 
-    log.info(f"🚀 广大大云端发布 | {date_str} | 赛道: {track_name}")
-    log.info(f"🤖 硅基流动(国内永久免费) | 🎨 PIL本地封面")
-    log.info(f"📝 角度: {angle[:50]}...")
+    pillar_name = PILLARS[pillar_key]["name"]
+    track_info = f" | 赛道: {TRACKS[track_key]['name']}" if track_key else ""
+    log.info(f"广大大云端发布 | {date_str} | 支柱: {pillar_name}{track_info}")
+    log.info(f"模型: {SILICONFLOW_MODEL} | 封面: PIL本地")
 
     # 去重检查
     if not args.force and not args.dry_run:
         if already_published_today(date_str):
-            log.info("✅ 今天已推送，退出")
+            log.info("今天已推送，退出")
             print(json.dumps({"skipped": True, "reason": f"{date_str} already published", "date": date_str}))
             return
 
-    # 只生成1张封面
-    cover_datas = generate_covers(track_key)
+    # 生成封面
+    cover_style = track_key or pillar_key
+    cover_data = generate_cover(cover_style)
 
     token = None if args.dry_run else wechat_get_token()
 
     results = {}
     try:
-        if track_key in cover_datas:
-            did, info = publish_track(token, track_key, date_str, cover_datas[track_key], output_dir)
-            if did:
-                results[track_key] = {"draft_id": did, **info}
+        did, info = publish_article(token, pillar_key, track_key, date_str, cover_data, output_dir)
+        if did:
+            results[pillar_key] = {"draft_id": did, **info}
     except Exception as e:
-        log.error(f"❌ {track_name} 失败: {e}")
+        log.error(f"{pillar_name} 失败: {e}")
         import traceback
         traceback.print_exc()
 
     log.info(f"\n{'='*50}")
-    for tk, info in results.items():
-        log.info(f"  {TRACKS[tk]['name']}: {info['title']}")
+    for pk, info in results.items():
+        log.info(f"  {PILLARS[pk]['name']}: {info['title']}")
         log.info(f"    草稿ID: {info['draft_id']}")
-    log.info(f"📌 审核发布: https://mp.weixin.qq.com → 草稿箱")
+    log.info(f"审核发布: https://mp.weixin.qq.com -> 草稿箱")
 
     print(json.dumps({k: {"draft_id": v["draft_id"], "title": v["title"]} for k, v in results.items()}, ensure_ascii=False))
 
