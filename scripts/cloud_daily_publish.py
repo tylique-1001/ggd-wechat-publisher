@@ -595,8 +595,13 @@ def generate_article(pillar_key, track_key, date_str, retry=0, max_retry=3):
 
     client = get_siliconflow_client()
 
-    # 优先使用DeepSeek-V3，余额不足时回退到Qwen2.5-7B（免费）
-    models_to_try = [SILICONFLOW_MODEL_PREFERRED, SILICONFLOW_MODEL_FALLBACK]
+    # 多模型fallback：先试DeepSeek-V3（质量最好），逐个回退到免费模型
+    models_to_try = [
+        SILICONFLOW_MODEL_PREFERRED,   # deepseek-ai/DeepSeek-V3 (付费，质量最好)
+        SILICONFLOW_MODEL_FALLBACK,    # Qwen/Qwen2.5-7B-Instruct (免费)
+        "THUDM/glm-4-9b-chat",         # GLM-4-9B (免费)
+        "01-ai/Yi-1.5-9B-Chat-16K",   # Yi-1.5-9B (免费)
+    ]
     text = None
     for model_name in models_to_try:
         try:
@@ -614,11 +619,8 @@ def generate_article(pillar_key, track_key, date_str, retry=0, max_retry=3):
             break
         except Exception as e:
             err_str = str(e)
-            if "balance" in err_str.lower() or "30001" in err_str:
-                log.warning(f"{model_name} 余额不足，尝试下一个模型...")
-                continue
-            else:
-                raise e
+            log.warning(f"{model_name} 失败: {err_str[:100]}，尝试下一个模型...")
+            continue
 
     if not text:
         raise RuntimeError("所有模型都失败了")
@@ -1050,7 +1052,7 @@ def main():
     pillar_name = PILLARS[pillar_key]["name"]
     track_info = f" | 赛道: {TRACKS[track_key]['name']}" if track_key else ""
     log.info(f"广大大云端发布 | {date_str} | 支柱: {pillar_name}{track_info}")
-    log.info(f"模型: {SILICONFLOW_MODEL_PREFERRED} (fallback: {SILICONFLOW_MODEL_FALLBACK})")
+    log.info(f"模型: {SILICONFLOW_MODEL_PREFERRED} | fallback: GLM-4/Yi-1.5/Qwen2.5-7B")
 
     # 去重检查
     if not args.force and not args.dry_run:
