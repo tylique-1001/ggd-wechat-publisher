@@ -9,7 +9,7 @@
 - 搜索真实行业新闻作为数据上下文
 
 环境变量（GitHub Secrets）：
-  SILICONFLOW_API_KEY — 硅基流动 API 密钥
+  DEEPSEEK_API_KEY    — DeepSeek API 密钥
   WEIXIN_APPID         — 广大大公众号 AppID
   WEIXIN_SECRET        — 广大大公众号 AppSecret
   FEISHU_WEBHOOK_URL   — 飞书群机器人 Webhook
@@ -40,12 +40,9 @@ WEIXIN_APPID = os.environ.get("WEIXIN_APPID", "wx94eb6ba27c82a203")
 WEIXIN_SECRET = os.environ.get("WEIXIN_SECRET", "")
 AUTHOR = "zylon"
 
-# 硅基流动（国内，兼容 OpenAI SDK）
-SILICONFLOW_BASE = "https://api.siliconflow.cn/v1"
-# 优先使用DeepSeek-V3（质量最好），余额不足时回退到Qwen2.5-7B（免费）
-SILICONFLOW_MODEL_PREFERRED = "deepseek-ai/DeepSeek-V3"
-SILICONFLOW_MODEL_FALLBACK = "Qwen/Qwen2.5-7B-Instruct"
-SILICONFLOW_MODEL = SILICONFLOW_MODEL_PREFERRED
+# DeepSeek 官方 API（国内，兼容 OpenAI SDK，新用户送 ¥5 免费额度）
+DEEPSEEK_API_BASE = "https://api.deepseek.com/v1"
+DEEPSEEK_MODEL = "deepseek-chat"  # DeepSeek-V4 Flash (Chat alias)，速度高质量好
 
 # 竞品黑名单（出现=推送事故）
 BANNED_COMPETITORS = [
@@ -250,12 +247,12 @@ def wechat_create_draft(token, title, digest, html, thumb_id=None):
 # ============================================================
 # 硅基流动 文本生成
 # ============================================================
-def get_siliconflow_client():
+def get_deepseek_client():
     from openai import OpenAI
-    key = os.environ.get("SILICONFLOW_API_KEY")
+    key = os.environ.get("DEEPSEEK_API_KEY")
     if not key:
-        raise RuntimeError("SILICONFLOW_API_KEY 未设置")
-    return OpenAI(api_key=key, base_url=SILICONFLOW_BASE)
+        raise RuntimeError("DEEPSEEK_API_KEY 未设置")
+    return OpenAI(api_key=key, base_url=DEEPSEEK_API_BASE)
 
 
 # ============================================================
@@ -593,37 +590,25 @@ def generate_article(pillar_key, track_key, date_str, retry=0, max_retry=3):
 
     log.info(f"生成 {pillar['name']}..." + (f" 赛道: {TRACKS[track_key]['name']}" if track_key else ""))
 
-    client = get_siliconflow_client()
+    client = get_deepseek_client()
 
-    # 多模型fallback：先试DeepSeek-V3（质量最好），逐个回退到免费模型
-    models_to_try = [
-        SILICONFLOW_MODEL_PREFERRED,   # deepseek-ai/DeepSeek-V3 (付费，质量最好)
-        SILICONFLOW_MODEL_FALLBACK,    # Qwen/Qwen2.5-7B-Instruct (免费)
-        "THUDM/glm-4-9b-chat",         # GLM-4-9B (免费)
-        "01-ai/Yi-1.5-9B-Chat-16K",   # Yi-1.5-9B (免费)
-    ]
+    # DeepSeek官方API：直接使用deepseek-chat（V4 Flash，速度快质量高）
     text = None
-    for model_name in models_to_try:
-        try:
-            log.info(f"使用模型: {model_name}")
-            resp = client.chat.completions.create(
-                model=model_name,
-                messages=[
-                    {"role": "system", "content": SYSTEM_PROMPT},
-                    {"role": "user", "content": prompt},
-                ],
-                temperature=0.7,
-                max_tokens=8000,
-            )
-            text = resp.choices[0].message.content
-            break
-        except Exception as e:
-            err_str = str(e)
-            log.warning(f"{model_name} 失败: {err_str[:100]}，尝试下一个模型...")
-            continue
-
-    if not text:
-        raise RuntimeError("所有模型都失败了")
+    try:
+        log.info(f"使用模型: {DEEPSEEK_MODEL}")
+        resp = client.chat.completions.create(
+            model=DEEPSEEK_MODEL,
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": prompt},
+            ],
+            temperature=0.7,
+            max_tokens=8000,
+        )
+        text = resp.choices[0].message.content
+    except Exception as e:
+        log.error(f"DeepSeek API 调用失败: {e}")
+        raise
     text = clean_ai_content(text)
 
     # 质量检查
@@ -1052,7 +1037,7 @@ def main():
     pillar_name = PILLARS[pillar_key]["name"]
     track_info = f" | 赛道: {TRACKS[track_key]['name']}" if track_key else ""
     log.info(f"广大大云端发布 | {date_str} | 支柱: {pillar_name}{track_info}")
-    log.info(f"模型: {SILICONFLOW_MODEL_PREFERRED} | fallback: GLM-4/Yi-1.5/Qwen2.5-7B")
+    log.info(f"模型: DeepSeek-V4 Flash ({DEEPSEEK_MODEL})")
 
     # 去重检查
     if not args.force and not args.dry_run:
