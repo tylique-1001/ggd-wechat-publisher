@@ -2,25 +2,46 @@ name: Keep Repository Alive
 
 on:
   schedule:
-    # 北京时间每天 8:30，比主推送(9:00)早半小时
-    - cron: "30 0 * * 1-5"
+    # 工作日每2小时跑一次（高频触发，总有能跑的）
+    # GitHub Actions cron可能延迟但不会永久跳过，高频+去重保证推送
+    - cron: "30 */2 * * 1-5"
 
 jobs:
-  keepalive:
+  ensure-publish:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     steps:
       - uses: actions/checkout@v4
 
-      - name: Update heartbeat timestamp
+      - name: 安装 Python 和依赖
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: 安装依赖
+        run: pip install openai pillow
+
+      - name: 如果是推送日且未推送，执行推送
+        env:
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          WEIXIN_APPID: ${{ secrets.WEIXIN_APPID }}
+          WEIXIN_SECRET: ${{ secrets.WEIXIN_SECRET }}
+          FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_WEBHOOK_URL }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # 只有周二(2)和周四(4)才推送
+          WEEKDAY=$(date +%u)
+          if [ "$WEEKDAY" != "2" ] && [ "$WEEKDAY" != "4" ]; then
+            echo "今天不是推送日（周二/四），跳过"
+            exit 0
+          fi
+          echo "今天是推送日，尝试推送（脚本自带去重）"
+          python scripts/cloud_daily_publish.py --date "$(date +%Y-%m-%d)" --force || echo "推送失败或已去重跳过"
+
+      - name: 更新心跳
         run: |
           date -u '+%Y-%m-%dT%H:%M:%SZ' > .heartbeat
-
-      - name: Commit and push
-        run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add .heartbeat
-          git commit -m "chore: heartbeat update" || echo "No changes to commit"
+          git commit -m "chore: heartbeat update" || echo "无需更新"
           git push
