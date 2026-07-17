@@ -35,7 +35,7 @@ jobs:
             exit 0
           fi
           echo "今天是推送日，尝试推送（脚本自带去重）"
-          python scripts/cloud_daily_publish.py --date "$(date +%Y-%m-%d)" --force || echo "推送失败或已去重跳过"
+          python scripts/cloud_daily_publish.py --date "$(date +%Y-%m-%d)" || echo "推送失败或已去重跳过"
 
       - name: 更新心跳
         run: |
