@@ -28,13 +28,13 @@ jobs:
           FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_WEBHOOK_URL }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # 只有周二(2)和周四(4)才推送
+          # 周一到周五(1-5)推送，周末跳过
           WEEKDAY=$(date +%u)
-          if [ "$WEEKDAY" != "2" ] && [ "$WEEKDAY" != "4" ]; then
-            echo "今天不是推送日（周二/四），跳过"
+          if [ "$WEEKDAY" -gt 5 ]; then
+            echo "今天是周末，跳过"
             exit 0
           fi
-          echo "今天是推送日，尝试推送（脚本自带去重）"
+          echo "工作日，尝试推送（脚本自带去重，已推送自动跳过）"
           python scripts/cloud_daily_publish.py --date "$(date +%Y-%m-%d)" || echo "推送失败或已去重跳过"
 
       - name: 更新心跳
