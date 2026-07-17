@@ -393,33 +393,43 @@ def check_content_quality(text):
 
 
 # ============================================================
-# 内容支柱调度（对齐方案：周二/四发布）
+# 内容支柱调度（用户要求：每天一篇，周一到周五）
 # ============================================================
 def get_daily_pillar(date_str):
     """根据日期确定今天的内容支柱和赛道
     
-    方案规定：
-    - 周二：竞品拆解台（默认），每月最后一个周二=数据月报
-    - 周四：方法论实战（默认），每月第二/四周四=客户故事
-    - 其他日期不发布
+    每日轮换方案（避免同质化）：
+    - 周一：竞品拆解台·游戏
+    - 周二：竞品拆解台·短剧
+    - 周三：方法论实战
+    - 周四：竞品拆解台·工具
+    - 周五：客户故事
+    - 月末最后一个工作日：数据月报
+    - 周末不发布
     """
     dt = datetime.strptime(date_str, "%Y-%m-%d")
-    weekday = dt.weekday()  # 0=Monday, 1=Tuesday, 3=Thursday
-
-    if weekday == 1:  # Tuesday
-        # 检查是否是本月最后一个周二
-        next_week = dt + timedelta(days=7)
-        if next_week.month != dt.month:
-            return "monthly_report", None
-        return "competitor", get_track_rotation(date_str)
-
-    if weekday == 3:  # Thursday
-        week_of_month = (dt.day - 1) // 7 + 1
-        if week_of_month in (2, 4):
-            return "customer_story", None
-        return "methodology", None
-
-    return None, None
+    weekday = dt.weekday()  # 0=Mon, 4=Fri, 5=Sat, 6=Sun
+    
+    if weekday >= 5:  # 周六日不发布
+        return None, None
+    
+    # 检查是否是本月最后一个工作日 → 数据月报
+    next_day = dt + timedelta(days=1)
+    while next_day.weekday() >= 5:  # 跳过周末
+        next_day += timedelta(days=1)
+    if next_day.month != dt.month:
+        return "monthly_report", None
+    
+    # 每日轮换
+    daily_pillars = [
+        ("competitor", "game"),      # 周一：竞品拆解台·游戏
+        ("competitor", "drama"),     # 周二：竞品拆解台·短剧
+        ("methodology", None),       # 周三：方法论实战
+        ("competitor", "tool"),      # 周四：竞品拆解台·工具
+        ("customer_story", None),    # 周五：客户故事
+    ]
+    
+    return daily_pillars[weekday]
 
 
 def get_track_rotation(date_str):
