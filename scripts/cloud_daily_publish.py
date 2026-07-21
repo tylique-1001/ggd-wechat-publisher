@@ -12,7 +12,6 @@
   DEEPSEEK_API_KEY    — DeepSeek API 密钥
   WEIXIN_APPID         — 广大大公众号 AppID
   WEIXIN_SECRET        — 广大大公众号 AppSecret
-  FEISHU_WEBHOOK_URL   — 飞书群机器人 Webhook
 """
 
 import os
@@ -893,34 +892,29 @@ def extract_title_digest(text, pillar_name, date_str):
 
 
 # ============================================================
-# 飞书通知
+# 钉钉通知
 # ============================================================
-def send_feishu_webhook(results, date_str, errors=None):
-    """通过飞书群机器人 webhook 发送推送通知
-    
-    注意：飞书webhook关键词是"公众号"，所有消息必须包含。
-    """
-    webhook_url = os.environ.get("FEISHU_WEBHOOK_URL", "")
-    if not webhook_url:
-        log.info("FEISHU_WEBHOOK_URL 未设置，跳过飞书通知")
-        return
+DINGTALK_WEBHOOK_URL = "https://oapi.dingtalk.com/robot/send?access_token=4998794fa3693eccf5f7f75c829b6da490a5c625852dd9d8edd01da929978328"
+
+def send_dingtalk_webhook(results, date_str, errors=None):
+    """通过钉钉群机器人 webhook 发送推送通知"""
 
     success_list = [(k, v) for k, v in results.items()]
     fail_list = errors or []
 
     if success_list and not fail_list:
         titles = "\n".join([f"{i+1}. {v['title']}" for i, (k, v) in enumerate(success_list)])
-        text = f"公众号推送完成({len(success_list)}篇) | {date_str}\n{titles}\n前往草稿箱审核: https://mp.weixin.qq.com"
+        text = f"公众号推送完成({len(success_list)}篇) {date_str}\n{titles}\n前往草稿箱审核: https://mp.weixin.qq.com"
     elif not success_list and fail_list:
-        text = f"公众号推送全部失败({len(fail_list)}篇) | {date_str}\n" + "\n".join(fail_list)
+        text = f"公众号推送全部失败({len(fail_list)}篇) {date_str}\n" + "\n".join(fail_list)
     else:
         ok_titles = "\n".join([f"{i+1}. {v['title']}" for i, (k, v) in enumerate(success_list)])
         fail_text = "\n".join(fail_list)
-        text = f"公众号推送成功({len(success_list)}篇) | {date_str}\n{ok_titles}\n\n失败({len(fail_list)}篇):\n{fail_text}"
+        text = f"公众号推送成功({len(success_list)}篇) {date_str}\n{ok_titles}\n\n失败({len(fail_list)}篇):\n{fail_text}"
 
-    payload = json.dumps({"msg_type": "text", "content": {"text": text}}, ensure_ascii=False).encode("utf-8")
+    payload = json.dumps({"msgtype": "text", "text": {"content": text}}, ensure_ascii=False).encode("utf-8")
     req = urllib.request.Request(
-        webhook_url,
+        DINGTALK_WEBHOOK_URL,
         data=payload,
         headers={"Content-Type": "application/json"},
         method="POST",
@@ -928,9 +922,9 @@ def send_feishu_webhook(results, date_str, errors=None):
     try:
         with urllib.request.urlopen(req, timeout=10) as resp:
             body = resp.read().decode("utf-8")
-            log.info(f"飞书通知已发送: {body}")
+            log.info(f"钉钉通知已发送: {body}")
     except Exception as e:
-        log.error(f"飞书通知发送失败: {e}")
+        log.error(f"钉钉通知发送失败: {e}")
 
 
 # ============================================================
@@ -1080,9 +1074,9 @@ def main():
 
     print(json.dumps({k: {"draft_id": v["draft_id"], "title": v["title"]} for k, v in results.items()}, ensure_ascii=False))
 
-    # 飞书通知
+    # 钉钉通知
     if not args.dry_run:
-        send_feishu_webhook(results, date_str)
+        send_dingtalk_webhook(results, date_str)
 
 
 if __name__ == "__main__":
