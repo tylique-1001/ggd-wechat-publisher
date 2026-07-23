@@ -944,8 +944,6 @@ def markdown_to_html(md_text, style_key):
         # 这确保不会出现AI模板式的bold小标题
         parts.append(f"""<p style="margin:0 0 14px 0;font-size:15px;color:{s['text']};line-height:1.88;">{line}</p>""")
 
-    parts.append(f"""<p style="margin:30px 0 10px 0;text-align:center;color:{s['accent']};font-size:14px;">想看完整买量数据？回复关键词获取更多~</p>""")
-    parts.append(f"""<p style="margin:20px 0 0 0;text-align:center;color:#bbb;font-size:11px;border-top:1px solid #eee;padding-top:14px;">广大大 | 出海买量数据专家</p>""")
     parts.append("</section>")
 
     return "\n".join(parts)
