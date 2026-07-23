@@ -645,31 +645,52 @@ def generate_article(pillar_key, track_key, date_str, retry=0, max_retry=3):
 
 
 # ============================================================
-# 封面图生成（PIL 本地）
+# 封面图生成（产品宣传素材风格 — 对齐广大大出海笔记）
 # ============================================================
-def generate_cover(style_key):
-    """使用 Pollinations.ai (免费FLUX模型) 生成封面图，返回 bytes
-    
-    按赛道/支柱选择不同风格prompt，生成与文章内容相关的配图。
-    失败时回退到PIL渐变封面。
-    """
-    cover_prompts = {
-        "game": "abstract dark gaming analytics, data visualization with red and gold accents, mobile game marketing strategy, cinematic lighting, professional, no text no watermark",
-        "tool": "clean minimalist technology app marketing concept, teal and green accents, productivity tools, digital marketing, professional, no text no watermark",
-        "drama": "cinematic short drama streaming concept, warm purple and amber tones, film reel, storytelling atmosphere, professional, no text no watermark",
-        "competitor": "abstract dark competitive analysis, data charts, red gold accents, mobile app marketing, cinematic, professional, no text no watermark",
-        "methodology": "clean instructional marketing analytics concept, teal accents, workflow optimization, professional, no text no watermark",
-        "monthly_report": "data dashboard analytics concept, purple amber tones, charts and graphs, industry report, professional, no text no watermark",
-        "customer_story": "warm business success story concept, orange tones, growth chart, professional, no text no watermark",
-    }
+def extract_product_from_article(article_text, track_key):
+    """从文章中提取主要产品名，用于生成匹配的封面图"""
+    if not track_key or not article_text:
+        return None
 
-    prompt = cover_prompts.get(style_key, cover_prompts["competitor"])
+    products = TRACKS.get(track_key, {}).get("products", [])
+    # 检查文章中出现了哪些已知产品名
+    found = []
+    for p in products:
+        if p in article_text:
+            found.append(p)
+
+    # 也尝试用正则提取引号内的产品名（如"TotallyMall"、"ReelShort"等）
+    quoted = re.findall(r'["「]([A-Za-z][A-Za-z0-9\s]{2,20})["」]', article_text)
+    for q in quoted:
+        if q not in found and len(q) > 2:
+            found.append(q)
+
+    return found[0] if found else None
+
+
+def generate_cover(style_key, product_name=None, article_title=None):
+    """使用 Pollinations.ai (免费FLUX模型) 生成封面图
+
+    风格对齐"广大大出海笔记"公众号：
+    - 游戏：游戏角色立绘 / 场景宣传图 / 游戏海报风格
+    - 短剧：剧集海报 / 角色剧照 / 影视叙事风
+    - 工具：产品界面 / 科技感宣传图 / App展示
+    - 数据月报：大数字仪表盘 / 数据可视化（参考截图第5张）
+    - 方法论/客户故事：对应赛道风格
+
+    参数:
+        style_key: 赛道或支柱类型 (game/tool/drama/competitor/methodology/monthly_report/customer_story)
+        product_name: 文章中提到的具体产品名（如"TotallyMall"、"ReelShort"、"CapCut"）
+        article_title: 文章标题（用于辅助判断配图方向）
+    """
+    # 根据赛道和产品构建prompt —— 核心原则：生成"产品自己的脸"
+    prompt = _build_cover_prompt(style_key, product_name, article_title)
     encoded_prompt = urllib.parse.quote(prompt)
     # Pollinations.ai 免费图片生成，不需要API key
     image_url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width=1792&height=1024&nologo=true&model=flux"
 
     try:
-        log.info(f"下载封面图 (Pollinations.ai FLUX)...")
+        log.info(f"下载封面图 (Pollinations.ai FLUX) | 产品: {product_name or '通用'} | 风格: {style_key}")
         req = urllib.request.Request(image_url, headers={"User-Agent": "Mozilla/5.0 (compatible; ggd-bot/1.0)"})
         with urllib.request.urlopen(req, timeout=90) as resp:
             image_data = resp.read()
@@ -677,7 +698,7 @@ def generate_cover(style_key):
         if len(image_data) < 5000:
             raise RuntimeError(f"图片太小({len(image_data)}字节)，可能生成失败")
 
-        # 中心裁剪为 900x383
+        # 中心裁剪为 900x383（微信封面比例 2.35:1）
         from PIL import Image
         img = Image.open(BytesIO(image_data))
         w, h = img.size
@@ -696,12 +717,96 @@ def generate_cover(style_key):
         buf = BytesIO()
         img.save(buf, "PNG")
         buf.seek(0)
-        log.info(f"封面图生成完成 (Pollinations.ai, style: {style_key})")
+        log.info(f"封面图生成完成 (Pollinations.ai, {len(buf.getvalue())} bytes)")
         return buf.getvalue()
 
     except Exception as e:
         log.warning(f"Pollinations.ai 失败({e})，回退到PIL渐变封面")
         return _generate_pil_cover(style_key)
+
+
+def _build_cover_prompt(style_key, product_name=None, article_title=None):
+    """构建封面图prompt
+
+    参考广大大出海笔记的实际封面风格：
+    - 第1张(TotallyMall/SLG): 游戏Q版角色立绘 + 游戏logo + 明亮背景
+    - 第2张(点点互动): 游戏角色特写 + 游戏场景背景
+    - 第3张(FC Mobile): 真人运动员形象 + 品牌logo + Play Now按钮风格
+    - 第4张(Whiteout Survival): 游戏角色群像 + 场景氛围
+    - 第5张(小游戏数据): 大数字(6.72亿) + 数据标签 + 深色科技背景
+    """
+
+    # 有具体产品名时，生成该产品的"宣传海报"风格
+    base_prompts = {
+        # ===== 游戏赛道：游戏角色立绘/场景宣传图 =====
+        "game": (
+            f"promotional game poster for {product_name or 'hit mobile game'}, "
+            f"main character showcase, high quality game art, "
+            f"vibrant colors, eye-catching composition, "
+            f"professional game marketing material, "
+            f"no text no watermark no logo no UI, "
+            f"4k game illustration style"
+            if product_name else
+            f"high quality mobile game promotional poster, "
+            f"game character art with dynamic pose, vibrant fantasy or sci-fi background, "
+            f"professional game marketing visual, "
+            f"no text no watermark, 4k game illustration"
+        ),
+        # ===== 短剧赛道：剧集海报/影视叙事风 =====
+        "drama": (
+            f"streaming drama series poster for {product_name or 'hit short drama'}, "
+            f"cinematic character portrait, dramatic lighting, film still aesthetic, "
+            f"emotional storytelling atmosphere, premium streaming promo art, "
+            f"no text no watermark, movie poster quality"
+            if product_name else
+            f"premium short drama streaming poster, cinematic character close-up, "
+            f"dramatic warm lighting, film noir or romance atmosphere, "
+            f"netflix-quality promotional art, no text no watermark"
+        ),
+        # ===== 工具赛道：产品界面/科技感 =====
+        "tool": (
+            f"clean product showcase for {product_name or 'productivity app'}, "
+            f"modern app interface mockup on smartphone, minimal tech aesthetic, "
+            f"bright clean background, professional app store screenshot style, "
+            f"no text no watermark, commercial product photography"
+            if product_name else
+            f"modern mobile app product shot, smartphone showing clean interface, "
+            f"minimal technology aesthetic, soft gradient background, "
+            f"professional app marketing visual, no text no watermark"
+        ),
+        # ===== 数据月报：大数字仪表盘（参考第5张截图） =====
+        "monthly_report": (
+            f"data dashboard hero image, huge bold numbers showing growth metrics, "
+            f"dark red and black background with glowing accents, "
+            f"data visualization elements, charts and percentage labels floating, "
+            f"gaming industry report aesthetic, cinematic lighting, "
+            f"no text no watermark, professional analytics visual"
+        ),
+        # ===== 方法论实战：干净 instructional 风格 =====
+        "methodology": (
+            f"clean modern marketing workspace concept, desk with notebook and coffee, "
+            f"warm natural lighting, minimalist productivity aesthetic, "
+            f"soft teal and white tones, professional but approachable, "
+            f"no text no watermark, lifestyle photography style"
+        ),
+        # ===== 客户故事：成功/增长感 =====
+        "customer_story": (
+            f"business success moment, team celebrating with laptop open showing growth chart, "
+            f"warm orange ambient light, modern office background, "
+            f"positive energy, achievement atmosphere, "
+            f"no text no watermark, commercial photography style"
+        ),
+        # ===== 默认竞品拆解（无赛道时） =====
+        "competitor": (
+            f"mobile game or app promotional artwork, dynamic character or product showcase, "
+            f"vibrant colors, professional marketing visual, "
+            f"no text no watermark, high quality digital art"
+        ),
+    }
+
+    prompt = base_prompts.get(style_key, base_prompts["competitor"])
+    log.info(f"Cover prompt: {prompt[:120]}...")
+    return prompt
 
 
 def _generate_pil_cover(style_key):
@@ -930,7 +1035,7 @@ def send_dingtalk_webhook(results, date_str, errors=None):
 # ============================================================
 # 发布
 # ============================================================
-def publish_article(token, pillar_key, track_key, date_str, cover_data, output_dir):
+def publish_article(token, pillar_key, track_key, date_str, output_dir):
     pillar = PILLARS[pillar_key]
     pillar_name = pillar["name"]
     log.info(f"\n{'='*40}\n{pillar_name} | {date_str}\n{'='*40}")
@@ -949,8 +1054,12 @@ def publish_article(token, pillar_key, track_key, date_str, cover_data, output_d
             break
     body_text = "\n".join(lines[body_start:]).strip()
 
-    # 封面
+    # 从文章中提取产品名，用于生成匹配的封面图
+    product_name = extract_product_from_article(body_text, track_key)
     cover_style = track_key or pillar_key
+
+    # 生成封面（传入产品名和标题，生成匹配的宣传素材风格）
+    cover_data = generate_cover(cover_style, product_name=product_name, article_title=title)
     cover_path = os.path.join(output_dir, f"cover_{cover_style}.png")
     with open(cover_path, "wb") as f:
         f.write(cover_data)
@@ -1050,15 +1159,14 @@ def main():
             print(json.dumps({"skipped": True, "reason": f"{date_str} already published", "date": date_str}))
             return
 
-    # 生成封面
+    # 生成封面（在 publish_article 内部根据文章内容自动匹配）
     cover_style = track_key or pillar_key
-    cover_data = generate_cover(cover_style)
 
     token = None if args.dry_run else wechat_get_token()
 
     results = {}
     try:
-        did, info = publish_article(token, pillar_key, track_key, date_str, cover_data, output_dir)
+        did, info = publish_article(token, pillar_key, track_key, date_str, output_dir)
         if did:
             results[pillar_key] = {"draft_id": did, **info}
     except Exception as e:
