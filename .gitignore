@@ -27,3 +27,5 @@ Thumbs.db
 scripts/auto_publish.py
 scripts/push_ggd.py
 .wechat_config.json
+.guangdada_config.json
+generated-images/
