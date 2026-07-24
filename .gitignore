@@ -29,3 +29,7 @@ scripts/push_ggd.py
 .wechat_config.json
 .guangdada_config.json
 generated-images/
+
+# 临时截图/测试输出
+drama/
+/tmp/

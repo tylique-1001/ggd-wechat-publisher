@@ -350,8 +350,8 @@ SYSTEM_PROMPT = f"""你是广大大(SocialPeta)公众号的资深编辑，在出
 3. 禁止破折号——/禁止"不仅而且"/禁止硬凑三点
 4. 正文禁止emoji
 5. 不低于1000字
-6. 可以用自然段落写作，也可以用 **## 小标题** 划分板块（如 ## 一、数据总览），但小标题要口语化自然，不要出现"数据总览""素材拆解"这种生硬标签
-7. **允许使用 markdown 表格** 来展示数据对比（如产品排名、投放指标对比），但表格要简洁，不超过5列；禁止用彩色卡片/进度条/渐变图表/花哨组件
+6. 可以用 **## 小标题** 做轻量分段，但小标题要口语化、像聊到哪了（如"## 先看DramaBox这边""## ReelShort在玩什么花样"），绝不要"数据总览""素材拆解"这种生硬章节标签。小标题只是路标，正文照旧是聊天体
+7. **允许用 markdown 表格** 罗列对比数据（产品排名、投放指标），表格不超过5列；禁止彩色卡片/进度条/渐变图表/花哨组件。表格里的数字用【广大大实时数据】里给的真实值，不要自己改
 8. 不要用#号做标题前缀（用 ## 即可）
 9. 开头直接说事，不要铺垫背景
 10. 禁止第一人称：不出现"我""我认为""我发现""我判断""我观察"等以"我"为主语的表述，改用客观行业视角或第三人称叙述
@@ -367,10 +367,11 @@ SYSTEM_PROMPT = f"""你是广大大(SocialPeta)公众号的资深编辑，在出
 - 第一行直接写标题文字，不加任何前缀
 
 ## 数据规则
-- 你会收到【广大大实时数据】上下文（广告主排行、创意数、热度、下载量等），直接引用这些真实数字
-- 引用时标注"根据广大大后台数据"
+- 你会收到【广大大实时数据】上下文，里面有可直接采用的真实数字和「一一对应的截图占位符」
+- 引用数字时写"根据广大大后台数据"，直接采用上下文里给的表格，不要自己编
+- 讲到某个产品时，紧跟它专属的截图占位符（如 {{IMG:analysis_reelshort}} / {{IMG:creative_reelshort}}），让截图和所讲产品一一对应；占位符在上下文里已列好，照抄即可
+- 严禁放整页界面长图，每个截图只对应一个产品
 - 没有数据的部分写趋势性判断，不要编精确数字
-- 文中需要放截图的地方写 {{IMG:analysis}} 和 {{IMG:creative}}（截图由系统自动插入）
 
 ## 竞品黑名单（绝对禁止出现）
 {', '.join(BANNED_COMPETITORS)}
@@ -778,7 +779,8 @@ def generate_cover(style_key, product_name=None, article_title=None):
     prompt = _build_cover_prompt(style_key, product_name, article_title)
     encoded_prompt = urllib.parse.quote(prompt)
     # Pollinations.ai 免费图片生成，不需要API key
-    image_url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width=1792&height=1024&nologo=true&model=flux"
+    # 直接按微信封面比例 2.35:1 生成（1792x762 ≈ 2.35:1），避免后续中心裁剪丢内容
+    image_url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width=1792&height=762&nologo=true&model=flux"
 
     try:
         log.info(f"下载封面图 (Pollinations.ai FLUX) | 产品: {product_name or '通用'} | 风格: {style_key}")
@@ -789,7 +791,7 @@ def generate_cover(style_key, product_name=None, article_title=None):
         if len(image_data) < 5000:
             raise RuntimeError(f"图片太小({len(image_data)}字节)，可能生成失败")
 
-        # 中心裁剪为 900x383（微信封面比例 2.35:1）
+        # 已是 2.35:1，仅做极轻量裁剪修正 + 缩放到封面尺寸 900x383（不再大幅裁切丢内容）
         from PIL import Image
         img = Image.open(BytesIO(image_data))
         w, h = img.size
@@ -799,7 +801,7 @@ def generate_cover(style_key, product_name=None, article_title=None):
             new_w = int(h * target_ratio)
             left = (w - new_w) // 2
             img = img.crop((left, 0, left + new_w, h))
-        else:
+        elif current_ratio < target_ratio:
             new_h = int(w / target_ratio)
             top = (h - new_h) // 2
             img = img.crop((0, top, w, top + new_h))
@@ -1195,10 +1197,9 @@ def publish_article(token, pillar_key, track_key, date_str, output_dir):
         try:
             import asyncio
             section = {"game": "game", "tool": "tool", "drama": "drama"}.get(track_key, "drama")
-            products = TRACKS[track_key]["products"][:1]  # 取第一个产品做主拆解对象
-            product_name = products[0]
-            log.info(f"正在采集 {product_name} 的真实数据与截图...")
-            real_data = asyncio.run(collect_product_data(product=product_name, section=section, out_dir=output_dir))
+            focus_products = TRACKS[track_key]["products"][:3]  # 焦点产品：文章要讲的几个，逐产品截图
+            log.info(f"采集真实数据与逐产品截图: {focus_products}")
+            real_data = asyncio.run(collect_product_data(products=focus_products, section=section, out_dir=output_dir))
             screenshots_local = {k: v for k, v in real_data.get("screenshots", {}).items() if os.path.exists(v)}
             log.info(f"截图: {list(screenshots_local.keys())}")
         except Exception as e:

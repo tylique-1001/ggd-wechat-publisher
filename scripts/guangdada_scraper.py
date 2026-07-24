@@ -14,9 +14,11 @@
 import asyncio
 import json
 import os
+import re
 import logging
 import urllib.request
 from datetime import datetime, timedelta
+from PIL import Image
 
 logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 log = logging.getLogger(__name__)
@@ -31,6 +33,11 @@ def load_config():
         return None
     with open(CONFIG_PATH, "r") as f:
         return json.load(f).get("guangdada")
+
+
+def slugify(name):
+    """把产品名转成截图占位符用的 slug，如 'DramaBox' -> 'dramabox' / 'ReelShort' -> 'reelshort'"""
+    return re.sub(r'[^a-z0-9]', '', name.lower())
 
 
 async def login(page):
@@ -101,16 +108,17 @@ async def get_advertiser_list(page, section="drama", limit=15):
                 
                 const name = (cells[1]?.innerText || '').split('\\n')[0].trim();
                 if (!name) continue;
-                
+
+                const cell = (i) => (cells[i]?.innerText || '').split('\\n')[0].trim();
                 results.push({{
                     name: name,
-                    total_creatives: cells[2]?.innerText?.trim() || '',
-                    platforms: cells[3]?.innerText?.trim() || '',
-                    countries: cells[4]?.innerText?.trim() || '',
-                    heat: cells[5]?.innerText?.trim() || '',
-                    downloads: cells[6]?.innerText?.trim() || '',
-                    recent_90d_creatives: cells[7]?.innerText?.trim() || '',
-                    duration: cells[8]?.innerText?.trim() || '',
+                    total_creatives: cell(2) || '',
+                    platforms: cell(3) || '',
+                    countries: cell(4) || '',
+                    heat: cell(5) || '',
+                    downloads: cell(6) || '',
+                    recent_90d_creatives: cell(7) || '',
+                    duration: cell(8) || '',
                 }});
             }}
             return JSON.stringify(results);
@@ -284,21 +292,15 @@ async def scrape_section_data(section="drama", products_to_subscribe=None):
     return data
 
 
-async def screenshot_analysis_table(page, section="drama", out_dir="/tmp/gd_shots"):
-    """截取「广告主分析」排行榜表格（数据区），返回截图路径
-
-    只截表格数据区域，不含导航/筛选项，完整不裁切。
-    """
-    os.makedirs(out_dir, exist_ok=True)
+async def _goto_analysis(page, section):
+    """进入广告主分析页（游戏/工具赛道先点分类tab）"""
     urls = {
         "drama": "https://guangdada.net/modules/drama/advertiser-analysis",
         "game": "https://guangdada.net/modules/advertiser/analysis",
         "tool": "https://guangdada.net/modules/advertiser/analysis",
     }
     await page.goto(urls.get(section, urls["drama"]), timeout=60000)
-    await page.wait_for_timeout(6000)
-
-    # 游戏/工具赛道需先点分类tab
+    await page.wait_for_timeout(5000)
     if section in ("game", "tool"):
         tab_text = {"game": "游戏", "tool": "工具"}[section]
         tabs = page.locator(f'button:has-text("{tab_text}"), .ant-tabs-tab:has-text("{tab_text}")').first
@@ -306,58 +308,160 @@ async def screenshot_analysis_table(page, section="drama", out_dir="/tmp/gd_shot
             await tabs.click()
             await page.wait_for_timeout(3000)
 
-    # 定位表格容器
-    table = page.locator('table, .ant-table-container, [class*="table"]').first
-    path = os.path.join(out_dir, f"analysis_{section}.png")
-    try:
-        await table.screenshot(path=path)
-    except Exception:
-        # 兜底：截视口
-        await page.screenshot(path=path)
-    log.info(f"广告主分析截图: {path}")
-    return path
 
+async def screenshot_product_rows(page, products, section="drama", out_dir="/tmp/gd_shots", slug=None):
+    """逐产品截「广告主分析」表里该产品**自己那一行**（元素级截图，不是整页长图）。
 
-async def screenshot_creative_grid(page, product=None, out_dir="/tmp/gd_shots"):
-    """截取「创意展示」页创意网格（创意库），返回截图路径
-
-    若传入 product，尝试用页内搜索过滤该产品创意；否则截顶部热门创意。
-    只截创意网格区域，不含导航/筛选项。
+    产品在默认榜单里直接用名称定位；不在（如 ReelShort）则先用页内搜索过滤再定位。
+    每个产品一张独立截图，和文中讲到的产品一一对应。
+    slug: 可选的截图文件名 slug（默认用产品名 slugify）；用于和文章占位符保持一致。
     """
     os.makedirs(out_dir, exist_ok=True)
-    await page.goto("https://guangdada.net/modules/creative/display-ads", timeout=60000)
-    await page.wait_for_timeout(5000)
+    await _goto_analysis(page, section)
+    shots = {}
+    for name in products:
+        s = slug or slugify(name)
+        path = os.path.join(out_dir, f"analysis_{s}.png")
+        try:
+            # 先用名称定位该行
+            loc = page.locator(f'tr:has-text("{name}")').first
+            if await loc.count() == 0:
+                # 搜索过滤后再定位
+                sb = page.locator('input[placeholder*="搜索"], input[placeholder*="Search"], input[type="text"]').first
+                if await sb.count() > 0:
+                    await sb.fill(name)
+                    await sb.press("Enter")
+                    await page.wait_for_timeout(5000)
+                loc = page.locator(f'tr:has-text("{name}")').first
+            if await loc.count() == 0:
+                log.warning(f"分析表未找到: {name}")
+                continue
+            # 滚到可视区再截该元素本身（只截这一行，不截整页）
+            await loc.scroll_into_view_if_needed()
+            await page.wait_for_timeout(500)
+            try:
+                await loc.screenshot(path=path)
+            except Exception:
+                box = await loc.bounding_box()
+                if box:
+                    await page.screenshot(path=path, clip=box)
+            shots[f"analysis_{slug}"] = path
+            log.info(f"产品行截图: {name} -> {path}")
+        except Exception as e:
+            log.warning(f"产品行截图失败 {name}: {e}")
+    return shots
 
-    if product:
-        sb = page.locator('input[placeholder*="搜索"], input[type="text"]').first
-        if await sb.count() > 0:
-            await sb.fill(product)
-            await sb.press("Enter")
-            await page.wait_for_timeout(5000)
 
-    # 定位创意网格容器（优先带 creative/grid 类，兜底视口）
-    grid = page.locator('[class*="creative"], [class*="grid"], .ant-row, [class*="list"]').first
-    path = os.path.join(out_dir, f"creative_{product or 'top'}.png")
-    try:
-        await grid.screenshot(path=path)
-    except Exception:
-        await page.screenshot(path=path)
-    log.info(f"创意库截图: {path}")
-    return path
+async def screenshot_product_creatives(page, products, out_dir="/tmp/gd_shots", slug=None):
+    """逐产品截「创意展示」里该产品**自己的创意**（先按产品搜索过滤，只截该产品创意区，不是整页）。
+
+    返回 {creative_<slug>: path}
+    """
+    os.makedirs(out_dir, exist_ok=True)
+    shots = {}
+    for name in products:
+        s = slug or slugify(name)
+        path = os.path.join(out_dir, f"creative_{s}.png")
+        try:
+            await page.goto("https://guangdada.net/modules/creative/display-ads", timeout=60000)
+            await page.wait_for_timeout(4000)
+            sb = page.locator('input[placeholder*="搜索"], input[type="text"]').first
+            if await sb.count() > 0:
+                await sb.fill(name)
+                await sb.press("Enter")
+                await page.wait_for_timeout(5000)
+
+            # 截「该产品」的创意网格（已按产品过滤），只取顶部约1-2张创意，和产品一一对应，不截整页长图
+            # 选择器要挑一个真实可见、有宽度的网格（避免匹配到隐藏的空容器）
+            grid = None
+            for sel in ('[class*="creative"]', '[class*="grid"]', '.ant-row', '[class*="list"]'):
+                loc = page.locator(sel).first
+                if await loc.count() == 0:
+                    continue
+                try:
+                    if await loc.is_visible():
+                        b = await loc.bounding_box()
+                        if b and b["width"] > 200:
+                            grid = loc
+                            break
+                except Exception:
+                    continue
+            if grid is not None:
+                try:
+                    await grid.screenshot(path=path)
+                except Exception:
+                    await page.screenshot(path=path)
+            else:
+                await page.screenshot(path=path)
+            shots[f"creative_{s}"] = path
+            log.info(f"创意截图: {name} -> {path}")
+        except Exception as e:
+            log.warning(f"创意截图失败 {name}: {e}")
+    return shots
 
 
-async def collect_product_data(product=None, section="drama", out_dir="/tmp/gd_shots"):
-    """一键采集：真实排行榜数据 + 两张数据区截图，返回结构化结果"""
+async def search_advertiser_row(page, name, section="drama"):
+    """在广告主分析页搜索某产品，返回其行指标 dict（或 None）。
+
+    用于焦点产品不在默认榜单前15时，也能拿到它的真实指标。
+    """
+    await _goto_analysis(page, section)
+    sb = page.locator('input[placeholder*="搜索"], input[placeholder*="Search"], input[type="text"]').first
+    if await sb.count() > 0:
+        await sb.fill(name)
+        await sb.press("Enter")
+        await page.wait_for_timeout(5000)
+    rows = await page.evaluate("""() => {
+        const rows = Array.from(document.querySelectorAll('tr'));
+        const out = [];
+        let headerPassed = false;
+        for (const row of rows) {
+            const t = row.innerText.trim();
+            if (!t) continue;
+            if (t.startsWith('#')) { headerPassed = true; continue; }
+            if (!headerPassed) continue;
+            const cells = row.querySelectorAll('td');
+            if (cells.length < 3) continue;
+            const nm = (cells[1]?.innerText||'').split('\\n')[0].trim();
+            if (!nm) continue;
+            out.push({
+                name: nm,
+                total_creatives: cells[2]?.innerText?.trim()||'',
+                platforms: cells[3]?.innerText?.trim()||'',
+                countries: cells[4]?.innerText?.trim()||'',
+                heat: cells[5]?.innerText?.trim()||'',
+                downloads: cells[6]?.innerText?.trim()||'',
+                recent_90d_creatives: cells[7]?.innerText?.trim()||'',
+                duration: cells[8]?.innerText?.trim()||'',
+            });
+            break;
+        }
+        return JSON.stringify(out);
+    }""")
+    found = json.loads(rows)
+    return found[0] if found else None
+
+
+async def collect_product_data(products=None, section="drama", out_dir="/tmp/gd_shots"):
+    """一键采集：真实排行榜数据 + 逐产品元素级截图，返回结构化结果。
+
+    products: 焦点产品列表（文章要讲的几个产品，如 ["ReelShort","DramaBox"]）。
+              每个焦点产品都会拿到「真实指标 + 自己的分析行截图 + 自己的创意截图」，
+              三者一一对应。焦点产品不在默认榜单前15时，会自动用搜索定位。
+    返回 lead_data: [{name, slug, 各指标}], screenshots: {"analysis_<slug>":path,"creative_<slug>":path}
+    """
     from playwright.async_api import async_playwright
 
     result = {
         "section": section,
-        "product": product,
+        "products": products or [],
         "ranking": [],
         "advertiser_list": [],
         "detail": {},
         "hot_charts": "",
         "creative_charts": "",
+        "lead_products": [],
+        "lead_data": [],
         "screenshots": {},
         "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"),
         "source": "广大大(SocialPeta)",
@@ -371,15 +475,48 @@ async def collect_product_data(product=None, section="drama", out_dir="/tmp/gd_s
         if not await login(page):
             return result
 
-        # 1. 广告主分析排行榜（真实数据）
+        # 1. 广告主分析排行榜（真实数据，背景/上下文用）
         result["ranking"] = await get_advertiser_list(page, section)
-        result["advertiser_list"] = result["ranking"]  # 兼容 format_data_for_prompt
+        result["advertiser_list"] = result["ranking"]
 
-        # 2. 截图：广告主分析数据区
-        result["screenshots"]["analysis"] = await screenshot_analysis_table(page, section, out_dir)
+        # 2. 焦点产品：用传入列表；空则取热度前3
+        focus = list(products or [])
+        if not focus and result["ranking"]:
+            focus = [a["name"] for a in result["ranking"][:3]]
+        focus = focus[:3]
 
-        # 3. 截图：创意库（该产品创意网格）
-        result["screenshots"]["creative"] = await screenshot_creative_grid(page, product, out_dir)
+        lead_data = []
+        screenshots = {}
+        for name in focus:
+            # 指标：先在榜单里按子串找（榜单名带后缀，如 "DramaBox - Stream Drama Shorts"）
+            hit = next((a for a in result["ranking"] if name.lower() in a["name"].lower()), None)
+            metrics = dict(hit) if hit else None
+            real_name = hit["name"] if hit else name
+            if metrics is None:
+                m = await search_advertiser_row(page, name, section)
+                if m:
+                    metrics = m
+                    real_name = m["name"]
+            # slug 用传入的焦点名（干净，如 reelshort/dramabox），和文章占位符一致
+            slug = slugify(name)
+            # 分析行截图（内部会按名称/搜索定位到该产品那一行）
+            screenshots.update(await screenshot_product_rows(page, [real_name], section, out_dir, slug=slug))
+            # 创意截图（按产品搜索过滤）
+            screenshots.update(await screenshot_product_creatives(page, [real_name], out_dir, slug=slug))
+            lead_data.append({
+                "name": real_name,
+                "slug": slug,
+                "total_creatives": (metrics or {}).get("total_creatives", ""),
+                "heat": (metrics or {}).get("heat", ""),
+                "downloads": (metrics or {}).get("downloads", ""),
+                "duration": (metrics or {}).get("duration", ""),
+                "recent_90d_creatives": (metrics or {}).get("recent_90d_creatives", ""),
+            })
+            log.info(f"焦点产品: {real_name} (slug={slug}) 指标={'有' if metrics else '无'}")
+
+        result["lead_data"] = lead_data
+        result["lead_products"] = [d["name"] for d in lead_data]
+        result["screenshots"] = screenshots
 
         await browser.close()
 
@@ -387,40 +524,54 @@ async def collect_product_data(product=None, section="drama", out_dir="/tmp/gd_s
 
 
 def format_data_for_prompt(data, pillar, track):
-    """将广大大数据格式化为AI提示词上下文"""
+    """将广大大数据格式化为AI提示词上下文：聚焦产品表格 + 一一对应的截图占位符"""
     lines = []
     lines.append(f"【广大大实时数据】时间: {data['timestamp']}")
     lines.append("")
-    
-    # 广告主排行
-    if data["advertiser_list"]:
-        lines.append(f"📊 {track}赛道广告主排行:")
-        for i, adv in enumerate(data["advertiser_list"][:10], 1):
-            lines.append(f"  {i}. {adv['name']}")
-            lines.append(f"     全部创意: {adv['total_creatives']} | 热度: {adv['heat']} | 下载量: {adv['downloads']}")
-            lines.append(f"     近90天创意: {adv['recent_90d_creatives']} | 投放天数: {adv['duration']}")
+
+    # 优先用 collect_product_data 产出的 lead_data（含焦点产品的真实指标+slug）
+    lead = data.get("lead_data") or []
+    if not lead:
+        ranking = data.get("advertiser_list", []) or data.get("ranking", [])
+        lead = [{
+            "name": a["name"], "slug": slugify(a["name"]),
+            "total_creatives": a.get("total_creatives", ""),
+            "heat": a.get("heat", ""),
+            "downloads": a.get("downloads", ""),
+            "duration": a.get("duration", ""),
+            "recent_90d_creatives": a.get("recent_90d_creatives", ""),
+        } for a in ranking[:3]]
+
+    if lead:
+        lines.append("下面是你这篇文章要讲的产品，在广大大后台抓到的真实数据，请直接采用（不要改数字，也不要补其他产品的数字）：")
         lines.append("")
-    
-    # 详情
-    if data["detail"]:
-        lines.append("📋 广告主详情:")
-        for name, detail in data["detail"].items():
-            lines.append(f"  {name}:")
-            for k, v in detail.items():
-                lines.append(f"    {k}: {v[:100]}")
+        lines.append("| 产品 | 累计创意 | 热度 | 下载量 | 投放天数 | 近90天创意 |")
+        lines.append("| --- | --- | --- | --- | --- | --- |")
+        for a in lead:
+            lines.append(
+                f"| {a['name']} | {a.get('total_creatives','')} | {a.get('heat','')} | "
+                f"{a.get('downloads','')} | {a.get('duration','')} | {a.get('recent_90d_creatives','')} |"
+            )
         lines.append("")
-    
-    # 热门榜单
-    if data["hot_charts"]:
-        lines.append(f"🔥 热投广告主榜单(前500字):")
-        lines.append(data["hot_charts"][:500])
+
+        lines.append("下面这些截图占位符，每个都对应一个具体产品（系统会自动插入该产品在广大大后台的真实截图，不是整页长图）：")
+        for a in lead:
+            slug = a.get("slug") or slugify(a["name"])
+            lines.append(f"  - {a['name']}：讲它的数据时紧跟 {{IMG:analysis_{slug}}}；讲它的创意/素材打法时紧跟 {{IMG:creative_{slug}}}")
         lines.append("")
-    
-    # 创意灵感
-    if data["creative_charts"]:
-        lines.append(f"💡 每周热门创意(前500字):")
-        lines.append(data["creative_charts"][:500])
-    
+        lines.append("硬要求：截图必须和所讲的产品严格一一对应。讲到A产品就放A的 {{IMG:analysis_<slug>}} / {{IMG:creative_<slug>}}，绝不能把B产品的截图配到A产品上，也绝不能放整页界面截图。")
+        lines.append("")
+
+    # 榜单其余产品（仅作背景，不配截图）
+    ranking = data.get("advertiser_list", []) or data.get("ranking", [])
+    lead_names = {a["name"] for a in lead}
+    others = [a for a in ranking if a.get("name") not in lead_names][:7]
+    if others:
+        lines.append("榜单其他产品（背景参考，文章里提一句即可，不用逐个配图）：")
+        for a in others:
+            lines.append(f"  - {a.get('name','')}：累计创意 {a.get('total_creatives','')} | 热度 {a.get('heat','')} | 下载量 {a.get('downloads','')}")
+        lines.append("")
+
     return "\n".join(lines)
 
 
