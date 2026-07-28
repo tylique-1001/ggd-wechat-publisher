@@ -9,6 +9,21 @@
  * 环境变量：WECHAT_APPID, WECHAT_SECRET（GitHub Secrets）
  */
 
+// ─── DNS 补丁：绕过代理劫持的系统 getaddrinfo，改用公共 DNS 直查 ───
+const dns = require('dns');
+dns.setServers(['223.5.5.5', '119.29.29.29', '8.8.8.8']);
+const _origLookup = dns.lookup;
+dns.lookup = function(hostname, opts, cb) {
+  if (typeof opts === 'function') { cb = opts; opts = {}; }
+  dns.resolve4(hostname, (err, addrs) => {
+    if (!err && addrs && addrs.length) {
+      if (opts.all) return cb(null, addrs.map(a => ({ address: a, family: 4 })));
+      return cb(null, addrs[0], 4);
+    }
+    _origLookup(hostname, opts, cb);  // 回退到系统解析
+  });
+};
+
 const https = require('https');
 const http = require('http');
 const fs = require('fs');
