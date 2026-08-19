@@ -406,5 +406,13 @@
     "digest": "送我出门上班",
     "content_file": "2026-08-07-image.html",
     "cover_image": "2026-08-07-image-cover.png"
+  },
+  {
+    "date": "2026-08-19",
+    "type": "image",
+    "title": "二十几块的小夜灯",
+    "digest": "晚上换尿布终于不用开大灯了",
+    "content_file": "2026-08-19-image.html",
+    "cover_image": "2026-08-19-image-cover.png"
   }
 ]
